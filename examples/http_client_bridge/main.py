@@ -23,12 +23,10 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 from typing import Any
 
-import httpx
 from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
@@ -118,7 +116,7 @@ def main() -> None:
     import uvicorn
     from fastapi import FastAPI
 
-    from adk_channels import ChannelsConfig, ChannelRegistry
+    from adk_channels import ChannelRegistry, ChannelsConfig
     from adk_channels.multi_app_bridge import MultiAppBridge
     from adk_channels.server_integration import ChannelsFastAPIIntegration
 

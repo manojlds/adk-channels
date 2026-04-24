@@ -6,10 +6,9 @@ import asyncio
 import logging
 import os
 
-from adk_channels import ChannelRegistry, ChatBridge, ChannelsConfig
 from google.adk.agents import Agent
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+
+from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("slack_agent")
@@ -78,8 +77,6 @@ async def run_bridge() -> None:
 
     # Create ADK agent components
     agent = create_agent()
-    session_service = InMemorySessionService()
-    runner = Runner(agent=agent, app_name="slack_agent", session_service=session_service)
 
     # Bridge with ADK integration
     bridge = ChatBridge(

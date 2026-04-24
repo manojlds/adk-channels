@@ -6,7 +6,7 @@ import asyncio
 import logging
 import os
 
-from adk_channels import ChannelRegistry, ChatBridge, ChannelsConfig
+from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("custom_runner")

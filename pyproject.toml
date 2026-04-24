@@ -42,6 +42,9 @@ all = [
   "uvicorn>=0.29.0",
 ]
 
+[project.scripts]
+adk-channels-slack = "examples.slack_fastapi:main"
+
 [project.urls]
 Homepage = "https://github.com/opencode/adk-channels"
 Repository = "https://github.com/opencode/adk-channels"

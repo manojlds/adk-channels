@@ -119,10 +119,7 @@ def app_resolver(message) -> str:
     """
     # For Slack, the sender is channel_id:thread_ts or channel_id
     sender = message.sender
-    if ":" in sender:
-        channel_id = sender.split(":")[0]
-    else:
-        channel_id = sender
+    channel_id = sender.split(":")[0] if ":" in sender else sender
 
     # Check channel mapping
     if channel_id in CHANNEL_MAP:
@@ -139,12 +136,11 @@ def app_resolver(message) -> str:
 def main() -> None:
     """Create and run the multi-app FastAPI server."""
     import uvicorn
+    from fastapi import FastAPI
 
-    from adk_channels import ChannelsConfig, ChannelRegistry
+    from adk_channels import ChannelRegistry, ChannelsConfig
     from adk_channels.multi_app_bridge import MultiAppBridge
     from adk_channels.server_integration import ChannelsFastAPIIntegration
-
-    from fastapi import FastAPI
 
     # Load config from env vars
     config = ChannelsConfig()
