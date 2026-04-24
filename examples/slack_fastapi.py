@@ -1,12 +1,21 @@
-"""FastAPI + Slack Agent — Ready-to-run example.
+"""FastAPI + Slack Agent — Ready-to-run example with LiteLLM support.
 
-This is the simplest way to get an ADK agent talking to Slack via a FastAPI server.
+This example supports any OpenAI-compatible model via LiteLLM or direct
+OpenAI-compatible endpoints (e.g., opencode.ai).
 
 Usage:
     # 1. Set env vars (see SLACK_SETUP.md)
     export SLACK_BOT_TOKEN=xoxb-...
     export SLACK_APP_TOKEN=xapp-...
-    export GOOGLE_API_KEY=...  # or GOOGLE_GENAI_API_KEY
+
+    # For OpenAI-compatible models (opencode, openrouter, etc.):
+    export MODEL=openai/glm-5
+    export OPENAI_API_KEY=sk-...
+    export OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
+
+    # Or for Google Gemini (default):
+    export GOOGLE_API_KEY=...
+    export MODEL=gemini-2.0-flash
 
     # 2. Run the server
     uv run python examples/slack_fastapi.py
@@ -39,9 +48,30 @@ logger = logging.getLogger("slack_fastapi")
 
 
 def create_agent() -> Agent:
-    """Create a simple ADK agent."""
+    """Create an ADK agent with configurable model support.
+
+    Supports:
+    - Google Gemini (default): MODEL=gemini-2.0-flash + GOOGLE_API_KEY
+    - OpenAI-compatible: MODEL=openai/glm-5 + OPENAI_API_KEY + OPENAI_BASE_URL
+    - Any LiteLLM model: MODEL=openrouter/... + respective env vars
+    """
+    model = os.environ.get("MODEL", "gemini-2.0-flash")
+
+    # If using OpenAI-compatible endpoint, ensure env vars are propagated
+    # to the underlying client libraries
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    openai_base = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
+
+    if openai_key and openai_base and "gemini" not in model.lower():
+        logger.info("Using OpenAI-compatible model: %s via %s", model, openai_base)
+        # Ensure these are in the environment for ADK/Google GenAI SDK to pick up
+        os.environ.setdefault("OPENAI_API_KEY", openai_key)
+        os.environ.setdefault("OPENAI_BASE_URL", openai_base)
+    else:
+        logger.info("Using model: %s", model)
+
     return Agent(
-        model="gemini-2.0-flash",
+        model=model,
         name="slack_assistant",
         description="A helpful assistant accessible via Slack",
         instruction="""
@@ -113,6 +143,7 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("ADK Slack Agent Server")
     logger.info("=" * 60)
+    logger.info("Model:     %s", os.environ.get("MODEL", "gemini-2.0-flash"))
     logger.info("Health:    http://0.0.0.0:8000/channels/health")
     logger.info("Status:    http://0.0.0.0:8000/channels/status")
     logger.info("Webhooks:  http://0.0.0.0:8000/channels/webhook/{adapter}")

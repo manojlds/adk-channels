@@ -93,9 +93,18 @@ No invitation needed — just open a DM with the bot.
 ### Set environment variables:
 
 ```bash
+# Required: Slack tokens
 export SLACK_BOT_TOKEN="xoxb-your-bot-token-here"
 export SLACK_APP_TOKEN="xapp-your-app-token-here"
-export GOOGLE_API_KEY="your-google-api-key"  # or GOOGLE_GENAI_API_KEY
+
+# Option A: Google Gemini (default)
+export MODEL="gemini-2.0-flash"
+export GOOGLE_API_KEY="your-google-api-key"
+
+# Option B: OpenAI-compatible endpoint (e.g., opencode.ai)
+export MODEL="openai/glm-5"
+export OPENAI_API_KEY="sk-your-key"
+export OPENAI_BASE_URL="https://opencode.ai/zen/go/v1"
 ```
 
 ### Run the example:
