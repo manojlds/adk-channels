@@ -4,20 +4,8 @@ This example supports any OpenAI-compatible model via LiteLLM or direct
 OpenAI-compatible endpoints (e.g., opencode.ai).
 
 Usage:
-    # 1. Set env vars (see SLACK_SETUP.md)
-    export SLACK_BOT_TOKEN=xoxb-...
-    export SLACK_APP_TOKEN=xapp-...
-
-    # For OpenAI-compatible models (opencode, openrouter, etc.):
-    export MODEL=openai/glm-5
-    export OPENAI_API_KEY=sk-...
-    export OPENAI_BASE_URL=https://opencode.ai/zen/go/v1
-
-    # Or for Google Gemini (default):
-    export GOOGLE_API_KEY=...
-    export MODEL=gemini-2.0-flash
-
-    # 2. Run the server
+    # 1. Set tokens in .env file (see SLACK_SETUP.md)
+    # 2. Run the server — .env is loaded automatically
     uv run python examples/slack_fastapi.py
 
     # Or via the installed script:
@@ -33,8 +21,10 @@ from __future__ import annotations
 
 import logging
 import os
+from pathlib import Path
 
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from google.adk.agents import Agent
 
@@ -42,6 +32,10 @@ from adk_channels import ChannelRegistry, ChannelsConfig
 from adk_channels.bridge import ChatBridge
 from adk_channels.config import AdapterConfig
 from adk_channels.server_integration import ChannelsFastAPIIntegration
+
+# Load .env from project root (one level up from this file)
+PROJECT_ROOT = Path(__file__).parent.parent
+load_dotenv(PROJECT_ROOT / ".env")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 logger = logging.getLogger("slack_fastapi")
