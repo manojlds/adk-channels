@@ -54,12 +54,17 @@ class ChatBridge:
         self._sessions: dict[str, SenderSession] = {}
         self._active_count = 0
         self._running = False
+        self._session_service: Any | None = None
 
     def start(self) -> None:
         """Start the chat bridge."""
         if self._running:
             return
         self._running = True
+        if self._agent_factory:
+            from google.adk.sessions import InMemorySessionService
+
+            self._session_service = InMemorySessionService()  # type: ignore[no-untyped-call]
         logger.info("Chat bridge started")
 
     def stop(self) -> None:
@@ -184,10 +189,9 @@ class ChatBridge:
             elif self._agent_factory:
                 # ADK Runner pattern
                 from google.adk.runners import Runner
-                from google.adk.sessions import InMemorySessionService
 
                 agent = self._agent_factory()
-                session_service = InMemorySessionService()  # type: ignore[no-untyped-call]
+                session_service = self._session_service
                 runner = Runner(agent=agent, app_name="adk-channels", session_service=session_service)
 
                 # Create session if it doesn't exist
