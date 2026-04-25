@@ -230,9 +230,9 @@ class ChatBridge:
                                 responses.append(part.text)
 
                 if thoughts:
-                    logger.debug("Thoughts (%s): %s", sender_key, " | ".join(thoughts))
+                    logger.debug("Thoughts captured (%s): %d thought parts", sender_key, len(thoughts))
 
-                return RunResult(ok=True, response="\n".join(responses) or "(no response)")
+                return RunResult(ok=True, response="\n".join(responses) or "(no response)", thoughts=thoughts)
             else:
                 return RunResult(
                     ok=False,
