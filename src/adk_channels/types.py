@@ -86,6 +86,7 @@ class RunResult:
 
     ok: bool
     response: str
+    thoughts: list[str] = field(default_factory=list)
     error: str | None = None
     duration_ms: float = 0.0
     exit_code: int = 0

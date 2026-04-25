@@ -79,6 +79,13 @@ class SlackAdapter(BaseChannelAdapter):
         web = AsyncWebClient(token=self._bot_token)
         prefix = f"*[{(message.source or 'adk')}] *\n" if message.source else ""
         full = prefix + message.text
+
+        # Append thoughts as a Slack blockquote
+        thoughts: list[str] = message.metadata.get("thoughts") if message.metadata else []
+        if thoughts:
+            thought_lines = "\n".join("> " + line for t in thoughts for line in t.split("\n"))
+            full += f"\n\n> 💭 *Thinking process*\n{thought_lines}"
+
         thread_ts = message.metadata.get("thread_ts") if message.metadata else None
         channel = message.recipient
 

@@ -153,7 +153,7 @@ class ChatBridge:
             duration_ms = (time.time() - start_time) * 1000
 
             if result.ok:
-                await self._send_reply(prompt.adapter, prompt.sender, result.response)
+                await self._send_reply(prompt.adapter, prompt.sender, result.response, thoughts=result.thoughts)
             else:
                 error_msg = result.error or "Something went wrong. Please try again."
                 await self._send_reply(prompt.adapter, prompt.sender, f"Error: {error_msg}")
@@ -243,9 +243,19 @@ class ChatBridge:
             logger.exception("Agent execution failed")
             return RunResult(ok=False, response="", error=str(exc))
 
-    async def _send_reply(self, adapter: str, recipient: str, text: str) -> None:
+    async def _send_reply(self, adapter: str, recipient: str, text: str, thoughts: list[str] | None = None) -> None:
         """Send a reply back through the originating adapter."""
-        result = await self._registry.send(ChannelMessage(adapter=adapter, recipient=recipient, text=text))
+        metadata: dict[str, Any] = {}
+        if thoughts:
+            metadata["thoughts"] = thoughts
+        result = await self._registry.send(
+            ChannelMessage(
+                adapter=adapter,
+                recipient=recipient,
+                text=text,
+                metadata=metadata,
+            )
+        )
         if not result.get("ok"):
             logger.error("Failed to send reply: %s", result.get("error"))
 
