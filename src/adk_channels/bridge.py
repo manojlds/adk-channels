@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -22,48 +21,6 @@ from adk_channels.types import (
 logger = logging.getLogger("adk_channels.bridge")
 
 _id_counter = 0
-
-
-def _strip_reasoning(text: str) -> str:
-    """Strip reasoning/thinking traces from model output.
-
-    Some models (e.g., GLM-5 via LiteLLM) output a chain-of-thought
-    before the final answer. This heuristic removes numbered reasoning
-    steps and keeps only the final response paragraph.
-    """
-    lines = text.split("\n")
-    output_lines = []
-    in_reasoning = False
-
-    for line in lines:
-        stripped = line.strip()
-        # Skip empty lines at the start
-        if not output_lines and not stripped:
-            continue
-        # Detect reasoning step lines like "1. **Analyze:**" or "Step 1:"
-        if re.match(r"^\d+\.[\s*]*\*\*?(Analyze|Determine|Draft|Refine|Step)", stripped, re.I):
-            in_reasoning = True
-            continue
-        if in_reasoning and not stripped:
-            # End of reasoning block
-            in_reasoning = False
-            continue
-        if not in_reasoning:
-            output_lines.append(line)
-
-    result = "\n".join(output_lines).strip()
-    if result:
-        return result
-
-    # Fallback: if the text ends with a quoted block, extract it
-    # e.g. "...\n\n"Hello! How can I help?""
-    match = re.search(r'"([^"]+)"\s*$', text)
-    if match:
-        return match.group(1)
-
-    # Last resort: return last non-empty paragraph
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    return paragraphs[-1] if paragraphs else text
 
 
 def _next_id() -> str:
@@ -256,7 +213,8 @@ class ChatBridge:
 
                 message = Content(role="user", parts=[Part(text=content)])
 
-                responses = []
+                thoughts: list[str] = []
+                responses: list[str] = []
                 async for event in runner.run_async(
                     user_id=sender_key,
                     session_id=sender_key,
@@ -264,12 +222,17 @@ class ChatBridge:
                 ):
                     if event.content and event.content.parts:
                         for part in event.content.parts:
-                            if part.text:
+                            if not part.text:
+                                continue
+                            if part.thought:
+                                thoughts.append(part.text)
+                            else:
                                 responses.append(part.text)
 
-                raw = "\n".join(responses)
-                cleaned = _strip_reasoning(raw)
-                return RunResult(ok=True, response=cleaned or "(no response)")
+                if thoughts:
+                    logger.debug("Thoughts (%s): %s", sender_key, " | ".join(thoughts))
+
+                return RunResult(ok=True, response="\n".join(responses) or "(no response)")
             else:
                 return RunResult(
                     ok=False,
