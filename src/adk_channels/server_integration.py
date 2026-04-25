@@ -183,6 +183,13 @@ class ChannelsFastAPIIntegration:
         """Start channel adapters and bridge on FastAPI startup."""
         logger.info("Starting channel adapters...")
 
+        # Load config if provided
+        if self._config:
+            await self._registry.load_config(self._config)
+            errors = self._registry.get_errors()
+            for err in errors:
+                logger.warning("Adapter error: %s - %s", err["adapter"], err["error"])
+
         # Set up incoming message handler
         async def on_message(message: IncomingMessage) -> None:
             await self._bridge.handle_message(message)
