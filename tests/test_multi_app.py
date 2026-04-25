@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
 from adk_channels.config import BridgeConfig
 from adk_channels.multi_app_bridge import MultiAppBridge
 from adk_channels.registry import ChannelRegistry
-from adk_channels.types import ChannelMessage, IncomingMessage
+from adk_channels.types import IncomingMessage
 
 
 class FakeAdapter:
@@ -194,6 +194,7 @@ class TestServerIntegration:
     async def test_integration_setup(self):
         pytest.importorskip("fastapi")
         from fastapi import FastAPI
+
         from adk_channels.server_integration import ChannelsFastAPIIntegration
 
         app = FastAPI()

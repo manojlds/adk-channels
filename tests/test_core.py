@@ -14,7 +14,6 @@ from adk_channels.types import (
     ChannelMessage,
     IncomingMessage,
     RunResult,
-    SenderSession,
 )
 
 

@@ -190,6 +190,20 @@ class ChatBridge:
                 session_service = InMemorySessionService()  # type: ignore[no-untyped-call]
                 runner = Runner(agent=agent, app_name="adk-channels", session_service=session_service)
 
+                # Create session if it doesn't exist
+                try:
+                    await session_service.get_session(
+                        app_name="adk-channels",
+                        user_id=sender_key,
+                        session_id=sender_key,
+                    )
+                except Exception:
+                    await session_service.create_session(
+                        app_name="adk-channels",
+                        user_id=sender_key,
+                        session_id=sender_key,
+                    )
+
                 # Use sender_key as session ID for persistent conversations
                 content = prompt.text
                 from google.genai.types import Content, Part
