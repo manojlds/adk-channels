@@ -147,9 +147,10 @@ class ChatBridge:
             len(session.queue),
         )
 
-        await self._process_next(sender_key)
+        self._schedule_process(sender_key)
 
-    async def _process_next(self, sender_key: str) -> None:
+    def _schedule_process(self, sender_key: str) -> None:
+        """Synchronously claim a processing slot and spawn a background task."""
         session = self._sessions.get(sender_key)
         if not session or session.processing or not session.queue:
             return
@@ -159,6 +160,14 @@ class ChatBridge:
         session.processing = True
         self._active_count += 1
         prompt = session.queue.pop(0)
+
+        asyncio.create_task(self._process_prompt(sender_key, prompt))
+
+    async def _process_prompt(self, sender_key: str, prompt: QueuedPrompt) -> None:
+        session = self._sessions.get(sender_key)
+        if not session:
+            self._active_count -= 1
+            return
 
         # Typing indicator
         adapter = self._registry.get_adapter(prompt.adapter)
@@ -213,8 +222,8 @@ class ChatBridge:
             session.last_activity_at = time.time()
 
             if session.queue:
-                await self._process_next(sender_key)
-            await self._drain_waiting()
+                self._schedule_process(sender_key)
+            self._drain_waiting_sync()
 
     async def _dispatch_interaction(self, message: IncomingMessage) -> bool:
         handler = self._interaction_handler
@@ -345,13 +354,13 @@ class ChatBridge:
         if not result.get("ok"):
             logger.error("Failed to send reply: %s", result.get("error"))
 
-    async def _drain_waiting(self) -> None:
-        """Process waiting senders when a slot frees up."""
+    def _drain_waiting_sync(self) -> None:
+        """Schedule waiting senders when a slot frees up."""
         if self._active_count >= self._config.max_concurrent:
             return
         for key, session in self._sessions.items():
             if not session.processing and session.queue:
-                await self._process_next(key)
+                self._schedule_process(key)
                 if self._active_count >= self._config.max_concurrent:
                     break
 

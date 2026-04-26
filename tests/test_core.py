@@ -203,7 +203,9 @@ class TestBridge:
         bridge.start()
 
         await bridge.handle_message(IncomingMessage(adapter="slack", sender="C1", text="hello"))
+        await asyncio.sleep(0.1)
         await bridge.handle_message(IncomingMessage(adapter="slack", sender="C1", text="again"))
+        await asyncio.sleep(0.1)
 
         assert len(seen_session_ids) == 2
         assert seen_session_ids[0] != seen_session_ids[1]
@@ -243,6 +245,7 @@ class TestBridge:
                 metadata={"user_id": "U123", "channel_id": "C1", "thread_ts": "thread-1"},
             )
         )
+        await asyncio.sleep(0.1)
         await bridge.handle_message(
             IncomingMessage(
                 adapter="slack",
@@ -251,6 +254,7 @@ class TestBridge:
                 metadata={"user_id": "U123", "channel_id": "C1", "thread_ts": "thread-2"},
             )
         )
+        await asyncio.sleep(0.1)
 
         assert len(seen_session_ids) == 2
         assert seen_session_ids[0] != seen_session_ids[1]
@@ -276,6 +280,7 @@ class TestBridge:
         bridge.start()
 
         await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+        await asyncio.sleep(0.2)
 
         assert any("timed out" in (msg.text or "").lower() for msg in fake_adapter.sent_messages)
         bridge.stop()

@@ -126,7 +126,9 @@ class TestMultiAppBridge:
         bridge.start()
 
         await bridge.handle_message(IncomingMessage(adapter="slack", sender="C123", text="hello"))
+        await asyncio.sleep(0.1)
         await bridge.handle_message(IncomingMessage(adapter="slack", sender="C123", text="again"))
+        await asyncio.sleep(0.1)
 
         bridge.stop()
 
@@ -177,8 +179,8 @@ class TestMultiAppBridge:
 
         bridge.stop()
 
-        # Should have: slow reply, queued reply, and queue full error
-        assert len(fake_adapter.sent_messages) >= 2
+        # Should have the queue full error reply
+        assert any("Queue full" in (m.text or "") for m in fake_adapter.sent_messages)
 
     @pytest.mark.asyncio
     async def test_sync_runner(self, registry, fake_adapter):
