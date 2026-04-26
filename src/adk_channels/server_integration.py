@@ -68,12 +68,10 @@ import logging
 from typing import Any
 
 try:
-    from fastapi import APIRouter, FastAPI, Request, Response
+    from fastapi import APIRouter, FastAPI
 except ImportError:
     FastAPI = None  # type: ignore
     APIRouter = None  # type: ignore
-    Request = None  # type: ignore
-    Response = None  # type: ignore
 
 from adk_channels.config import ChannelsConfig
 from adk_channels.registry import ChannelRegistry
@@ -122,38 +120,8 @@ class ChannelsFastAPIIntegration:
         self._app.add_event_handler("startup", self._on_startup)
         self._app.add_event_handler("shutdown", self._on_shutdown)
 
-        # Create router for channel webhooks
+        # Create router for channel endpoints
         router = APIRouter(prefix=self._webhook_prefix)
-
-        @router.post("/webhook/{adapter_name}")
-        async def webhook_endpoint(adapter_name: str, request: Request) -> Response:
-            """Receive webhook events from external services."""
-            try:
-                body = await request.json()
-                logger.debug("Webhook received for %s: %s", adapter_name, body)
-
-                # Normalize to IncomingMessage
-                text = body.get("text", "")
-                sender = body.get("sender", "")
-                metadata = body.get("metadata", {})
-                metadata["raw_body"] = body
-
-                message = IncomingMessage(
-                    adapter=adapter_name,
-                    sender=sender,
-                    text=text,
-                    metadata=metadata,
-                )
-
-                await self._bridge.handle_message(message)
-                return Response(content='{"ok": true}', status_code=200, media_type="application/json")
-            except Exception as exc:
-                logger.exception("Webhook error for adapter %s", adapter_name)
-                return Response(
-                    content=f'{{"ok": false, "error": "{exc}"}}',
-                    status_code=500,
-                    media_type="application/json",
-                )
 
         @router.get("/health")
         async def health() -> dict[str, Any]:
@@ -177,7 +145,7 @@ class ChannelsFastAPIIntegration:
             }
 
         self._app.include_router(router)
-        logger.info("Channels webhook routes mounted at %s", self._webhook_prefix)
+        logger.info("Channels routes mounted at %s", self._webhook_prefix)
 
     async def _on_startup(self) -> None:
         """Start channel adapters and bridge on FastAPI startup."""

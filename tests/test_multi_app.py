@@ -292,4 +292,3 @@ class TestServerIntegration:
         routes = [r.path for r in app.routes]
         assert "/channels/health" in routes
         assert "/channels/status" in routes
-        assert "/channels/webhook/{adapter_name}" in routes
