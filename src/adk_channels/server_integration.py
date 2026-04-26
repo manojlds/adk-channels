@@ -16,9 +16,11 @@ as a sub-application or exposed via runner endpoints. This module lets you:
 
 Example - Multi-app FastAPI server:
 -----------------------------------
+    from pathlib import Path
+
     from fastapi import FastAPI
     from google.adk.agents import Agent
-    from google.adk.sessions import InMemorySessionService
+    from google.adk.sessions.sqlite_session_service import SqliteSessionService
     from adk_channels import ChannelsConfig, ChannelRegistry
     from adk_channels.bridge import ChatBridge
     from adk_channels.server_integration import ChannelsFastAPIIntegration
@@ -31,6 +33,8 @@ Example - Multi-app FastAPI server:
     app = FastAPI()
 
     # Configure channels
+    session_db = Path(".adk_channels/sessions.sqlite")
+    session_db.parent.mkdir(parents=True, exist_ok=True)
     config = ChannelsConfig()
     registry = ChannelRegistry()
     await registry.load_config(config)
@@ -44,7 +48,7 @@ Example - Multi-app FastAPI server:
             "support": lambda: support_agent,
             "engineering": lambda: eng_agent,
         },
-        session_service_factory=InMemorySessionService,
+        session_service_factory=lambda: SqliteSessionService(str(session_db)),
     )
 
     # Integrate channels into FastAPI

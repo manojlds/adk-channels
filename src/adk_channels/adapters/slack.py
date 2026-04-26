@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 from typing import Any
 
 from adk_channels.adapters.base import BaseChannelAdapter
@@ -14,6 +15,7 @@ from adk_channels.types import AdapterDirection, ChannelMessage, IncomingMessage
 logger = logging.getLogger("adk_channels.adapters.slack")
 
 MAX_LENGTH = 3000  # Slack block text limit; API limit is 4000 but leave margin
+EVENT_DEDUPE_TTL_SECONDS = 300
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -49,6 +51,7 @@ class SlackAdapter(BaseChannelAdapter):
         self._allowed_channel_ids: list[str] = list(model_extra.get("allowed_channel_ids", [])) if model_extra else []
         self._respond_to_mentions_only = _coerce_bool(model_extra.get("respond_to_mentions_only"), False)
         self._reply_in_thread_by_default = _coerce_bool(model_extra.get("reply_in_thread_by_default"), True)
+        self._continue_threads_without_mention = _coerce_bool(model_extra.get("continue_threads_without_mention"), True)
         self._slash_command = str(model_extra.get("slash_command", "/adk"))
 
         if not self._bot_token:
@@ -60,6 +63,7 @@ class SlackAdapter(BaseChannelAdapter):
         self._web_client: Any | None = None
         self._bot_user_id: str | None = None
         self._on_message: OnIncomingMessage | None = None
+        self._processed_event_keys: dict[str, float] = {}
 
     def _is_allowed(self, channel_id: str) -> bool:
         if not self._allowed_channel_ids:
@@ -70,6 +74,11 @@ class SlackAdapter(BaseChannelAdapter):
         if not self._bot_user_id:
             return text
         return re.sub(rf"<@{self._bot_user_id}>\s*", "", text).strip()
+
+    def _is_bot_mention(self, event: dict[str, Any]) -> bool:
+        if not self._bot_user_id:
+            return False
+        return f"<@{self._bot_user_id}>" in str(event.get("text") or "")
 
     def _build_metadata(self, event: dict[str, Any], extra: dict[str, Any] | None = None) -> dict[str, Any]:
         meta = {
@@ -92,31 +101,108 @@ class SlackAdapter(BaseChannelAdapter):
         channel = str(event.get("channel") or "")
         return not channel_type and channel.startswith("D")
 
+    @staticmethod
+    def _event_key(event: dict[str, Any]) -> str | None:
+        channel = event.get("channel")
+        message_ts = event.get("ts")
+        if channel in (None, "") or message_ts in (None, ""):
+            return None
+        return f"{channel}:{message_ts}"
+
+    def _prune_tracking(self, now: float) -> None:
+        self._processed_event_keys = {
+            key: seen_at
+            for key, seen_at in self._processed_event_keys.items()
+            if now - seen_at <= EVENT_DEDUPE_TTL_SECONDS
+        }
+
+    @staticmethod
+    def _is_thread_reply(event: dict[str, Any]) -> bool:
+        thread_ts = event.get("thread_ts")
+        if thread_ts in (None, ""):
+            return False
+
+        message_ts = event.get("ts")
+        if message_ts in (None, ""):
+            return True
+
+        return str(thread_ts) != str(message_ts)
+
+    def _claim_event(self, event: dict[str, Any]) -> bool:
+        now = time.time()
+        self._prune_tracking(now)
+
+        event_key = self._event_key(event)
+        if event_key is None:
+            return True
+
+        if event_key in self._processed_event_keys:
+            return False
+
+        self._processed_event_keys[event_key] = now
+        return True
+
+    def _effective_event_type(self, event: dict[str, Any], event_type: str) -> str:
+        if event_type == "message" and not self._is_direct_message(event) and self._is_bot_mention(event):
+            return "app_mention"
+        return event_type
+
+    def _requires_existing_session(self, event: dict[str, Any], event_type: str) -> bool:
+        return (
+            event_type == "message"
+            and self._respond_to_mentions_only
+            and self._continue_threads_without_mention
+            and not self._is_direct_message(event)
+            and not self._is_bot_mention(event)
+            and self._is_thread_reply(event)
+        )
+
     def _resolve_event_thread_ts(self, event: dict[str, Any], event_type: str) -> str | None:
+        effective_event_type = self._effective_event_type(event, event_type)
         thread_ts = event.get("thread_ts")
         if thread_ts:
             return str(thread_ts)
 
-        if event_type == "app_mention" and self._reply_in_thread_by_default and not self._is_direct_message(event):
+        if (
+            effective_event_type == "app_mention"
+            and self._reply_in_thread_by_default
+            and not self._is_direct_message(event)
+        ):
             message_ts = event.get("ts")
             if message_ts:
                 return str(message_ts)
 
         return None
 
+    def _should_handle_message_event(self, event: dict[str, Any]) -> bool:
+        if self._is_direct_message(event):
+            return True
+
+        if self._is_bot_mention(event):
+            return True
+
+        if self._continue_threads_without_mention and self._is_thread_reply(event):
+            return True
+
+        return not self._respond_to_mentions_only
+
     def _translate_event(self, event: dict[str, Any], event_type: str) -> IncomingMessage | None:
         channel = str(event.get("channel") or "")
         if not channel or not self._is_allowed(channel):
             return None
 
+        effective_event_type = self._effective_event_type(event, event_type)
         thread_ts = self._resolve_event_thread_ts(event, event_type)
         sender = f"{channel}:{thread_ts}" if thread_ts else channel
+        metadata_extra: dict[str, Any] = {"event_type": effective_event_type, "thread_ts": thread_ts}
+        if self._requires_existing_session(event, event_type):
+            metadata_extra["requires_existing_session"] = True
 
         return IncomingMessage(
             adapter="slack",
             sender=sender,
             text=self._strip_bot_mention(str(event.get("text") or "")),
-            metadata=self._build_metadata(event, {"event_type": event_type, "thread_ts": thread_ts}),
+            metadata=self._build_metadata(event, metadata_extra),
         )
 
     def _resolve_destination(self, message: ChannelMessage) -> tuple[str, str | None]:
@@ -525,15 +611,10 @@ class SlackAdapter(BaseChannelAdapter):
             if not event.get("text"):
                 return
 
-            channel_type = event.get("channel_type")
-            text = event.get("text", "")
-
-            # Skip messages that @mention the bot in channels/groups (handled by app_mention)
-            if self._bot_user_id and channel_type in ("channel", "group") and f"<@{self._bot_user_id}>" in text:
+            if not self._should_handle_message_event(event):
                 return
 
-            # In channels/groups, optionally only respond to @mentions
-            if self._respond_to_mentions_only and channel_type in ("channel", "group"):
+            if not self._claim_event(event):
                 return
 
             incoming = self._translate_event(event, "message")
@@ -548,6 +629,9 @@ class SlackAdapter(BaseChannelAdapter):
         @app.event("app_mention")
         async def handle_mention(event: dict[str, Any], say: Any, ack: Any) -> None:
             await ack()
+
+            if not self._claim_event(event):
+                return
 
             incoming = self._translate_event(event, "app_mention")
             if incoming is None:

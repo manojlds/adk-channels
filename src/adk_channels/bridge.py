@@ -202,6 +202,18 @@ class ChatBridge:
         # Get or create app + session
         app_sessions = self._sessions.setdefault(app_name, {})
         session = app_sessions.get(sender_key)
+        if (
+            session is None
+            and self._requires_existing_session(message)
+            and not await self._existing_dispatch_session_exists(app_name, sender_key)
+        ):
+            logger.info(
+                "Ignoring message for app=%s key=%s because it requires an existing session",
+                app_name,
+                sender_key,
+            )
+            return
+
         if not session:
             session = self._create_session(message)
             app_sessions[sender_key] = session
@@ -371,17 +383,16 @@ class ChatBridge:
 
     async def _run_agent_prompt(self, app_name: str, prompt: QueuedPrompt, sender_key: str) -> RunResult:
         """Run the agent prompt for a specific app."""
-        dispatch_app_name = app_name
-        if not self._has_dispatch_target(app_name):
-            if not self._has_dispatch_target("default"):
-                return RunResult(
-                    ok=False,
-                    response="",
-                    error=f"No agent configured for app '{app_name}'",
-                )
+        dispatch_app_name = self._resolve_dispatch_app_name(app_name)
+        if dispatch_app_name is None:
+            return RunResult(
+                ok=False,
+                response="",
+                error=f"No agent configured for app '{app_name}'",
+            )
 
+        if dispatch_app_name != app_name:
             logger.warning("No dispatch configured for app '%s', falling back to 'default'", app_name)
-            dispatch_app_name = "default"
 
         try:
             return await self._dispatch_for_app(dispatch_app_name, prompt, sender_key)
@@ -398,6 +409,45 @@ class ChatBridge:
 
     def _has_dispatch_target(self, app_name: str) -> bool:
         return app_name in self._agent_runners or app_name in self._http_clients or app_name in self._agent_factories
+
+    @staticmethod
+    def _requires_existing_session(message: IncomingMessage) -> bool:
+        return bool(message.metadata.get("requires_existing_session"))
+
+    def _resolve_dispatch_app_name(self, app_name: str) -> str | None:
+        if self._has_dispatch_target(app_name):
+            return app_name
+        if self._has_dispatch_target("default"):
+            return "default"
+        return None
+
+    async def _existing_dispatch_session_exists(self, app_name: str, sender_key: str) -> bool:
+        dispatch_app_name = self._resolve_dispatch_app_name(app_name)
+        if dispatch_app_name is None:
+            return False
+
+        if dispatch_app_name not in self._agent_factories:
+            return False
+
+        if self._shared_session_service is None:
+            return False
+
+        session_mode = self._resolve_session_mode(dispatch_app_name, sender_key)
+        if session_mode != "persistent":
+            return False
+
+        run_session_id = self._build_run_session_id(dispatch_app_name, sender_key, "existing", session_mode)
+        try:
+            session = await self._shared_session_service.get_session(
+                app_name=dispatch_app_name,
+                user_id=sender_key,
+                session_id=run_session_id,
+            )
+        except Exception:
+            logger.exception("Failed to check existing session app=%s key=%s", dispatch_app_name, sender_key)
+            return False
+
+        return session is not None
 
     async def _dispatch_for_app(self, app_name: str, prompt: QueuedPrompt, sender_key: str) -> RunResult:
         """Dispatch a prompt to one configured app target."""

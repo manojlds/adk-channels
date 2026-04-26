@@ -360,6 +360,112 @@ class TestBridge:
         assert any("Echo: hello" in (msg.text or "") for msg in fake_adapter.sent_messages)
         bridge.stop()
 
+    @pytest.mark.asyncio
+    async def test_bridge_ignores_required_existing_session_without_adk_session(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        runner_called = False
+
+        async def runner(session_id: str, text: str) -> str:
+            nonlocal runner_called
+            runner_called = True
+            return f"Echo: {text}"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_runner=runner,
+        )
+        bridge.start()
+
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C123:thread-1",
+                text="follow up",
+                metadata={"requires_existing_session": True, "thread_ts": "thread-1"},
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        assert runner_called is False
+        assert fake_adapter.sent_messages == []
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_allows_required_existing_session_for_active_bridge_session(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        seen_texts: list[str] = []
+
+        async def runner(session_id: str, text: str) -> str:
+            seen_texts.append(text)
+            return f"Echo: {text}"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_runner=runner,
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="C123:thread-1", text="start"))
+        await asyncio.sleep(0.1)
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C123:thread-1",
+                text="follow up",
+                metadata={"requires_existing_session": True, "thread_ts": "thread-1"},
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        assert seen_texts == ["start", "follow up"]
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_allows_required_existing_session_from_session_service(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        class ExistingSessionService:
+            async def get_session(self, **kwargs):
+                return object()
+
+        async def fake_run_agent(app_name, prompt, sender_key):
+            return RunResult(ok=True, response=f"Echo: {prompt.text}")
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_factories={"default": lambda: object()},
+            session_service_factory=ExistingSessionService,
+        )
+        bridge._run_agent_prompt = fake_run_agent
+        bridge.start()
+
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C123:thread-1",
+                text="follow up",
+                metadata={"requires_existing_session": True, "thread_ts": "thread-1"},
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        assert any("Echo: follow up" in (msg.text or "") for msg in fake_adapter.sent_messages)
+        bridge.stop()
+
     def test_bridge_stats(self):
         registry = ChannelRegistry()
         from adk_channels.bridge import ChatBridge

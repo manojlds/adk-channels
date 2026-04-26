@@ -53,7 +53,8 @@ Need full copy/paste files? See `TEMPLATES.md` for complete Basic/Intermediate/A
    - `app_mentions:read`
    - `commands` (if using slash commands)
    - `im:history`, `channels:history`, `groups:history` (as needed)
-5. Enable **Interactivity & Shortcuts** if you use block buttons/selects in messages
+5. Enable **Event Subscriptions** and subscribe to `app_mention` and `message.im`; add `message.channels` and `message.groups` if you want replies in bot-started channel threads to continue without re-mentioning the bot
+6. Enable **Interactivity & Shortcuts** if you use block buttons/selects in messages
 
 ### Environment Variables
 
@@ -71,6 +72,12 @@ export ADK_CHANNELS_ADAPTERS__SLACK__RESPOND_TO_MENTIONS_ONLY=true
 
 # Optional: disable automatic thread replies for top-level channel @mentions
 export ADK_CHANNELS_ADAPTERS__SLACK__REPLY_IN_THREAD_BY_DEFAULT=false
+
+# Optional: require @mentions even inside bot-started channel threads
+export ADK_CHANNELS_ADAPTERS__SLACK__CONTINUE_THREADS_WITHOUT_MENTION=false
+
+# Optional: durable SQLite ADK sessions for examples
+export ADK_CHANNELS_SESSION_DB=.adk_channels/sessions.sqlite
 ```
 
 ### Basic Setup (Single Agent)
@@ -145,12 +152,20 @@ FastAPI App
 ### Example: Multi-App Server
 
 ```python
+from pathlib import Path
+
 from fastapi import FastAPI
 from google.adk.agents import Agent
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.sqlite_session_service import SqliteSessionService
 from adk_channels import ChannelsConfig, ChannelRegistry, ChatBridge
 from adk_channels.server_integration import ChannelsFastAPIIntegration
 import uvicorn
+
+SESSION_DB = Path(".adk_channels/sessions.sqlite")
+
+def create_session_service():
+    SESSION_DB.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteSessionService(str(SESSION_DB))
 
 # Define multiple agents
 support_agent = Agent(
@@ -191,7 +206,7 @@ bridge = ChatBridge(
         "engineering": lambda: eng_agent,
         "default": lambda: support_agent,
     },
-    session_service_factory=InMemorySessionService,
+    session_service_factory=create_session_service,
 )
 
 # Integrate channels into FastAPI
@@ -323,13 +338,14 @@ Example `channels.json`:
 | `allowed_channel_ids` | `string[]` | Optional allowlist of channel IDs |
 | `respond_to_mentions_only` | `boolean` | Only respond to @mentions in channels |
 | `reply_in_thread_by_default` | `boolean` | For top-level channel @mentions, reply in a new thread and use that thread as sender/session key (default: `true`) |
+| `continue_threads_without_mention` | `boolean` | Continue bot-started channel threads when users reply without @mentioning the bot (default: `true`) |
 | `slash_command` | `string` | Slash command to register (default: `/adk`) |
 
 **Features:**
 - Responds to DMs automatically
 - Responds to @mentions in channels (if `respond_to_mentions_only` is false, responds to all messages in allowed channels)
 - Supports slash commands with instant acknowledgment
-- Thread-aware: top-level channel @mentions start a thread by default; thread replies stay in the same thread; top-level DMs stay in the DM conversation
+- Thread-aware: top-level channel @mentions start a thread by default; replies in bot-started threads continue without repeated @mentions when channel message events are subscribed; top-level DMs stay in the DM conversation
 - Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
 - Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)
@@ -504,6 +520,19 @@ Choose how the bridge derives the session key:
 - **`thread`**: Thread-level memory when thread metadata exists
 
 Use `session_rules` with glob patterns to override mode for subsets of traffic (for example, keep DMs persistent while making shared channels stateless).
+
+### Durable ADK Sessions
+
+The bridge always derives the same run session id for the same persistent sender key. For Slack thread conversations, that sender key is `channel_id:thread_ts`, so a durable ADK session service can restore the agent context even after the bridge prunes its in-memory queue state or the process restarts.
+
+The examples use ADK's `SqliteSessionService` by default. Set `ADK_CHANNELS_SESSION_DB` to choose the database path; otherwise examples use `.adk_channels/sessions.sqlite`.
+
+For Slack unmentioned thread replies, the adapter marks the message as requiring an existing session. The bridge then checks the durable ADK session service for the same `channel_id:thread_ts` run session id before enqueueing it. If no session exists, the message is ignored instead of starting a new channel thread conversation accidentally.
+
+Ephemeral state still exists outside the ADK session service:
+- In-flight bridge queues and concurrency slots
+- Short-lived Slack duplicate event suppression
+- Example-only in-memory tool state such as pending approval dictionaries
 
 ### Bridge Config
 

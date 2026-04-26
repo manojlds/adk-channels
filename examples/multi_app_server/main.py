@@ -38,12 +38,19 @@ Then in Slack:
 
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import logging
 import os
+import sys
+from pathlib import Path
 
-from google.adk.sessions import InMemorySessionService
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from examples.agents import create_default_agent, create_engineering_agent, create_support_agent, resolve_model
+from examples.session_service import create_sqlite_session_service, resolve_session_db_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("multi_app_server")
@@ -103,6 +110,7 @@ def main() -> None:
                 type="slack",
                 bot_token=bot_token,
                 app_token=app_token,
+                respond_to_mentions_only=True,
             )
         else:
             logger.error("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars")
@@ -125,7 +133,7 @@ def main() -> None:
             "engineering": lambda: create_engineering_agent(model=model),
             "default": lambda: create_default_agent(model=model),
         },
-        session_service_factory=InMemorySessionService,
+        session_service_factory=create_sqlite_session_service,
     )
 
     # Create FastAPI app
@@ -150,6 +158,7 @@ def main() -> None:
         return {"status": "ok", "service": "adk-multi-app-server"}
 
     logger.info("Starting server on http://0.0.0.0:8000")
+    logger.info("ADK sessions: %s", resolve_session_db_path())
     logger.info("Channels health: http://0.0.0.0:8000/channels/health")
     logger.info("Channels status: http://0.0.0.0:8000/channels/status")
 

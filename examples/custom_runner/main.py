@@ -32,6 +32,7 @@ async def main() -> None:
                 type="slack",
                 bot_token=bot_token,
                 app_token=app_token,
+                respond_to_mentions_only=True,
             )
         else:
             logger.error("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars")
