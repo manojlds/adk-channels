@@ -138,7 +138,7 @@ def test_translate_channel_app_mention_can_disable_default_threading() -> None:
             type="slack",
             bot_token="xoxb-test",
             app_token="xapp-test",
-            reply_in_thread_by_default=False,
+            reply_in_thread_by_default="false",
         )
     )
 
@@ -156,6 +156,21 @@ def test_translate_channel_app_mention_can_disable_default_threading() -> None:
     assert incoming is not None
     assert incoming.sender == "C123"
     assert incoming.metadata["thread_ts"] is None
+
+
+def test_slack_boolean_config_coerces_env_style_strings() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            respond_to_mentions_only="true",
+            reply_in_thread_by_default="false",
+        )
+    )
+
+    assert adapter._respond_to_mentions_only is True
+    assert adapter._reply_in_thread_by_default is False
 
 
 def test_build_tool_blocks_formats_interactions() -> None:
