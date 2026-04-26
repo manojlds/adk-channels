@@ -527,9 +527,9 @@ The bridge always derives the same run session id for the same persistent sender
 
 The examples use ADK's `SqliteSessionService` by default. Set `ADK_CHANNELS_SESSION_DB` to choose the database path; otherwise examples use `.adk_channels/sessions.sqlite`.
 
-For Slack unmentioned thread replies, the adapter marks the message as requiring an existing session. The bridge then checks the configured shared session service for the same `channel_id:thread_ts` run session id before enqueueing it. If no session exists, the message is ignored instead of starting a new channel thread conversation accidentally.
+For Slack thread replies where the bot is not `@mentioned`, the adapter marks the message as requiring an existing session. The bridge then checks the configured shared session service for the same `channel_id:thread_ts` run session id before enqueueing it. If no session exists, the message is ignored instead of starting a new channel thread conversation accidentally.
 
-This durable continuation check works with direct ADK Runner dispatch (`agent_factories`) and with `agent_runner` or `http_clients` when you provide `session_service_factory` pointing at the same durable ADK session store used by that runner/client. Without a shared session service, unmentioned thread replies can continue only while the bridge still has an active in-memory session; after a restart or prune, mention the bot once in the thread to resume or create the durable session.
+This durable continuation check works with direct ADK Runner dispatch (`agent_factories`) and with `agent_runner` or `http_clients` when you provide `session_service_factory` pointing at the same durable ADK session store used by that runner/client. Without a shared session service, thread replies where the bot is not `@mentioned` can continue only while the bridge still has an active in-memory session; after a restart or prune, mention the bot once in the thread to resume or create the durable session.
 
 Ephemeral state still exists outside the ADK session service:
 - In-flight bridge queues and concurrency slots
