@@ -16,6 +16,8 @@ logger = logging.getLogger("adk_channels.adapters.slack")
 
 MAX_LENGTH = 3000  # Slack block text limit; API limit is 4000 but leave margin
 EVENT_DEDUPE_TTL_SECONDS = 300
+EVENT_DEDUPE_PRUNE_INTERVAL_SECONDS = 30
+EVENT_DEDUPE_MAX_KEYS = 10_000
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -64,6 +66,7 @@ class SlackAdapter(BaseChannelAdapter):
         self._bot_user_id: str | None = None
         self._on_message: OnIncomingMessage | None = None
         self._processed_event_keys: dict[str, float] = {}
+        self._last_event_prune_at = 0.0
 
     def _is_allowed(self, channel_id: str) -> bool:
         if not self._allowed_channel_ids:
@@ -115,6 +118,13 @@ class SlackAdapter(BaseChannelAdapter):
             for key, seen_at in self._processed_event_keys.items()
             if now - seen_at <= EVENT_DEDUPE_TTL_SECONDS
         }
+        self._last_event_prune_at = now
+
+    def _should_prune_tracking(self, now: float) -> bool:
+        return (
+            now - self._last_event_prune_at >= EVENT_DEDUPE_PRUNE_INTERVAL_SECONDS
+            or len(self._processed_event_keys) > EVENT_DEDUPE_MAX_KEYS
+        )
 
     @staticmethod
     def _is_thread_reply(event: dict[str, Any]) -> bool:
@@ -130,13 +140,15 @@ class SlackAdapter(BaseChannelAdapter):
 
     def _claim_event(self, event: dict[str, Any]) -> bool:
         now = time.time()
-        self._prune_tracking(now)
+        if self._should_prune_tracking(now):
+            self._prune_tracking(now)
 
         event_key = self._event_key(event)
         if event_key is None:
             return True
 
-        if event_key in self._processed_event_keys:
+        seen_at = self._processed_event_keys.get(event_key)
+        if seen_at is not None and now - seen_at <= EVENT_DEDUPE_TTL_SECONDS:
             return False
 
         self._processed_event_keys[event_key] = now

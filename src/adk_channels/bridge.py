@@ -426,10 +426,12 @@ class ChatBridge:
         if dispatch_app_name is None:
             return False
 
-        if dispatch_app_name not in self._agent_factories:
-            return False
-
         if self._shared_session_service is None:
+            logger.debug(
+                "Cannot verify existing session for app=%s key=%s without a shared session service",
+                dispatch_app_name,
+                sender_key,
+            )
             return False
 
         session_mode = self._resolve_session_mode(dispatch_app_name, sender_key)

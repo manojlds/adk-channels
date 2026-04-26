@@ -438,19 +438,21 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         class ExistingSessionService:
+            def __init__(self) -> None:
+                self.get_session_kwargs = None
+
             async def get_session(self, **kwargs):
+                self.get_session_kwargs = kwargs
                 return object()
 
-        async def fake_run_agent(app_name, prompt, sender_key):
-            return RunResult(ok=True, response=f"Echo: {prompt.text}")
+        service = ExistingSessionService()
 
         bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True),
             registry=registry,
-            agent_factories={"default": lambda: object()},
-            session_service_factory=ExistingSessionService,
+            agent_runner=lambda session_id, text: f"Echo: {text}",
+            session_service_factory=lambda: service,
         )
-        bridge._run_agent_prompt = fake_run_agent
         bridge.start()
 
         await bridge.handle_message(
@@ -463,6 +465,11 @@ class TestBridge:
         )
         await asyncio.sleep(0.1)
 
+        assert service.get_session_kwargs == {
+            "app_name": "default",
+            "user_id": "slack:C123:thread-1",
+            "session_id": "default:slack:C123:thread-1",
+        }
         assert any("Echo: follow up" in (msg.text or "") for msg in fake_adapter.sent_messages)
         bridge.stop()
 
