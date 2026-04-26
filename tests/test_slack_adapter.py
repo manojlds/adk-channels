@@ -51,6 +51,113 @@ def test_resolve_destination_prefers_metadata_thread() -> None:
     assert thread_ts == "1746044940.999999"
 
 
+def test_translate_channel_app_mention_defaults_to_thread_session() -> None:
+    adapter = _make_adapter()
+    adapter._bot_user_id = "B123"
+
+    incoming = adapter._translate_event(
+        {
+            "channel": "C123",
+            "channel_type": "channel",
+            "user": "U123",
+            "ts": "1746044940.123400",
+            "text": "<@B123> deploy this",
+        },
+        "app_mention",
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "C123:1746044940.123400"
+    assert incoming.text == "deploy this"
+    assert incoming.metadata["thread_ts"] == "1746044940.123400"
+    assert incoming.metadata["event_type"] == "app_mention"
+
+
+def test_translate_channel_app_mention_keeps_existing_thread() -> None:
+    adapter = _make_adapter()
+
+    incoming = adapter._translate_event(
+        {
+            "channel": "C123",
+            "channel_type": "channel",
+            "user": "U123",
+            "ts": "1746044941.000001",
+            "thread_ts": "1746044940.123400",
+            "text": "follow up",
+        },
+        "app_mention",
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "C123:1746044940.123400"
+    assert incoming.metadata["thread_ts"] == "1746044940.123400"
+
+
+def test_translate_dm_app_mention_does_not_create_thread() -> None:
+    adapter = _make_adapter()
+
+    incoming = adapter._translate_event(
+        {
+            "channel": "D123",
+            "channel_type": "im",
+            "user": "U123",
+            "ts": "1746044940.123400",
+            "text": "hello",
+        },
+        "app_mention",
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "D123"
+    assert incoming.metadata["thread_ts"] is None
+
+
+def test_translate_threaded_dm_message_uses_thread_session() -> None:
+    adapter = _make_adapter()
+
+    incoming = adapter._translate_event(
+        {
+            "channel": "D123",
+            "channel_type": "im",
+            "user": "U123",
+            "ts": "1746044941.000001",
+            "thread_ts": "1746044940.123400",
+            "text": "thread follow up",
+        },
+        "message",
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "D123:1746044940.123400"
+    assert incoming.metadata["thread_ts"] == "1746044940.123400"
+
+
+def test_translate_channel_app_mention_can_disable_default_threading() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            reply_in_thread_by_default=False,
+        )
+    )
+
+    incoming = adapter._translate_event(
+        {
+            "channel": "C123",
+            "channel_type": "channel",
+            "user": "U123",
+            "ts": "1746044940.123400",
+            "text": "hello",
+        },
+        "app_mention",
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "C123"
+    assert incoming.metadata["thread_ts"] is None
+
+
 def test_build_tool_blocks_formats_interactions() -> None:
     adapter = _make_adapter()
     blocks = adapter._build_tool_blocks(

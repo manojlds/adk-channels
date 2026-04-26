@@ -68,6 +68,9 @@ export ADK_CHANNELS_ADAPTERS__SLACK__ALLOWED_CHANNEL_IDS='["C0123456789"]'
 
 # Optional: only respond to @mentions in channels
 export ADK_CHANNELS_ADAPTERS__SLACK__RESPOND_TO_MENTIONS_ONLY=true
+
+# Optional: disable automatic thread replies for top-level channel @mentions
+export ADK_CHANNELS_ADAPTERS__SLACK__REPLY_IN_THREAD_BY_DEFAULT=false
 ```
 
 ### Basic Setup (Single Agent)
@@ -319,13 +322,14 @@ Example `channels.json`:
 | `app_token` | `string` | App-Level Token for Socket Mode (`xapp-...`) |
 | `allowed_channel_ids` | `string[]` | Optional allowlist of channel IDs |
 | `respond_to_mentions_only` | `boolean` | Only respond to @mentions in channels |
+| `reply_in_thread_by_default` | `boolean` | For top-level channel @mentions, reply in a new thread and use that thread as sender/session key (default: `true`) |
 | `slash_command` | `string` | Slash command to register (default: `/adk`) |
 
 **Features:**
 - Responds to DMs automatically
 - Responds to @mentions in channels (if `respond_to_mentions_only` is false, responds to all messages in allowed channels)
 - Supports slash commands with instant acknowledgment
-- Thread-aware: replies in the same thread
+- Thread-aware: top-level channel @mentions start a thread by default; thread replies stay in the same thread; top-level DMs stay in the DM conversation
 - Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
 - Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)

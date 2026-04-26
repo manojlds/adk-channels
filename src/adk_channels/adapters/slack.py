@@ -37,6 +37,9 @@ class SlackAdapter(BaseChannelAdapter):
         self._respond_to_mentions_only = bool(
             config.model_extra.get("respond_to_mentions_only", False) if config.model_extra else False
         )
+        self._reply_in_thread_by_default = bool(
+            config.model_extra.get("reply_in_thread_by_default", True) if config.model_extra else True
+        )
         self._slash_command = str(config.model_extra.get("slash_command", "/adk") if config.model_extra else "/adk")
 
         if not self._bot_token:
@@ -70,6 +73,42 @@ class SlackAdapter(BaseChannelAdapter):
         if extra:
             meta.update(extra)
         return meta
+
+    @staticmethod
+    def _is_direct_message(event: dict[str, Any]) -> bool:
+        channel_type = str(event.get("channel_type") or "")
+        if channel_type == "im":
+            return True
+
+        channel = str(event.get("channel") or "")
+        return not channel_type and channel.startswith("D")
+
+    def _resolve_event_thread_ts(self, event: dict[str, Any], event_type: str) -> str | None:
+        thread_ts = event.get("thread_ts")
+        if thread_ts:
+            return str(thread_ts)
+
+        if event_type == "app_mention" and self._reply_in_thread_by_default and not self._is_direct_message(event):
+            message_ts = event.get("ts")
+            if message_ts:
+                return str(message_ts)
+
+        return None
+
+    def _translate_event(self, event: dict[str, Any], event_type: str) -> IncomingMessage | None:
+        channel = str(event.get("channel") or "")
+        if not channel or not self._is_allowed(channel):
+            return None
+
+        thread_ts = self._resolve_event_thread_ts(event, event_type)
+        sender = f"{channel}:{thread_ts}" if thread_ts else channel
+
+        return IncomingMessage(
+            adapter="slack",
+            sender=sender,
+            text=self._strip_bot_mention(str(event.get("text") or "")),
+            metadata=self._build_metadata(event, {"event_type": event_type, "thread_ts": thread_ts}),
+        )
 
     def _resolve_destination(self, message: ChannelMessage) -> tuple[str, str | None]:
         channel = message.recipient
@@ -477,10 +516,6 @@ class SlackAdapter(BaseChannelAdapter):
             if not event.get("text"):
                 return
 
-            channel = str(event.get("channel", ""))
-            if not channel or not self._is_allowed(channel):
-                return
-
             channel_type = event.get("channel_type")
             text = event.get("text", "")
 
@@ -492,18 +527,12 @@ class SlackAdapter(BaseChannelAdapter):
             if self._respond_to_mentions_only and channel_type in ("channel", "group"):
                 return
 
-            thread_ts = event.get("thread_ts")
-            sender: str = f"{channel}:{thread_ts}" if thread_ts else channel
+            incoming = self._translate_event(event, "message")
+            if incoming is None:
+                return
 
             if self._on_message:
-                result = self._on_message(
-                    IncomingMessage(
-                        adapter="slack",
-                        sender=sender,
-                        text=self._strip_bot_mention(text),
-                        metadata=self._build_metadata(event, {"event_type": "message"}),
-                    )
-                )
+                result = self._on_message(incoming)
                 if result is not None:
                     await result
 
@@ -511,22 +540,12 @@ class SlackAdapter(BaseChannelAdapter):
         async def handle_mention(event: dict[str, Any], say: Any, ack: Any) -> None:
             await ack()
 
-            channel = str(event.get("channel", ""))
-            if not channel or not self._is_allowed(channel):
+            incoming = self._translate_event(event, "app_mention")
+            if incoming is None:
                 return
 
-            thread_ts = event.get("thread_ts")
-            sender: str = f"{channel}:{thread_ts}" if thread_ts else channel
-
             if self._on_message:
-                result = self._on_message(
-                    IncomingMessage(
-                        adapter="slack",
-                        sender=sender,
-                        text=self._strip_bot_mention(event.get("text", "")),
-                        metadata=self._build_metadata(event, {"event_type": "app_mention"}),
-                    )
-                )
+                result = self._on_message(incoming)
                 if result is not None:
                     await result
 
