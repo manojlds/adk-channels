@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adk_channels.adapters.slack import SlackAdapter
+from adk_channels.adapters.slack import SlackAdapter, _coerce_bool
 from adk_channels.config import AdapterConfig
 from adk_channels.types import ChannelMessage
 
@@ -261,6 +261,12 @@ def test_slack_boolean_config_coerces_env_style_strings() -> None:
     assert adapter._respond_to_mentions_only is True
     assert adapter._reply_in_thread_by_default is False
     assert adapter._continue_threads_without_mention is False
+
+
+def test_slack_boolean_config_uses_default_for_unknown_values() -> None:
+    assert _coerce_bool("maybe", False) is False
+    assert _coerce_bool("maybe", True) is True
+    assert _coerce_bool(1, False) is False
 
 
 def test_build_tool_blocks_formats_interactions() -> None:

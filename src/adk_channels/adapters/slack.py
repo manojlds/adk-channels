@@ -31,7 +31,8 @@ def _coerce_bool(value: Any, default: bool) -> bool:
             return True
         if normalized in {"", "0", "false", "no", "off"}:
             return False
-    return bool(value)
+        return default
+    return default
 
 
 async def create_slack_adapter(config: AdapterConfig) -> BaseChannelAdapter:
@@ -623,6 +624,10 @@ class SlackAdapter(BaseChannelAdapter):
             if not event.get("text"):
                 return
 
+            channel = str(event.get("channel") or "")
+            if not channel or not self._is_allowed(channel):
+                return
+
             if not self._should_handle_message_event(event):
                 return
 
@@ -641,6 +646,10 @@ class SlackAdapter(BaseChannelAdapter):
         @app.event("app_mention")
         async def handle_mention(event: dict[str, Any], say: Any, ack: Any) -> None:
             await ack()
+
+            channel = str(event.get("channel") or "")
+            if not channel or not self._is_allowed(channel):
+                return
 
             if not self._claim_event(event):
                 return
