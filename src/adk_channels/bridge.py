@@ -71,6 +71,38 @@ class ChatBridge:
         # Shared
         interaction_handler: InteractionHandler | None = None,
     ) -> None:
+        """Initialize the unified bridge.
+
+        Args:
+            bridge_config: Bridge configuration. If ``None``, defaults are used.
+            registry: Channel registry for outbound sends and adapter lookup.
+            agent_runner: Single-agent convenience runner with signature
+                ``(session_id, text) -> response``. When provided, this is merged
+                into ``agent_runners`` under the ``"default"`` key.
+            agent_factory: Single-agent convenience factory returning an ADK agent.
+                When provided, this is merged into ``agent_factories`` under the
+                ``"default"`` key.
+            app_resolver: Resolver for multi-app mode. Can return ``str`` or
+                ``Awaitable[str]``. Defaults to ``"default"`` for all messages.
+            agent_factories: Mapping of ``app_name -> agent factory``.
+            agent_runners: Mapping of ``app_name -> runner`` where runner
+                signature is ``(app_name, session_id, text) -> response``.
+            http_clients: Mapping of ``app_name -> async HTTP client`` with
+                signature ``(session_id, text) -> response``.
+            session_service_factory: Optional factory for a shared ADK
+                SessionService instance.
+            interaction_handler: Optional callback invoked before agent routing
+                for interactive events (for example Slack block actions).
+
+        Notes:
+            - Explicit ``agent_runners`` / ``agent_factories`` entries take
+              precedence over single-agent convenience params because merges use
+              ``setdefault("default", ...)``.
+            - Dispatch priority is:
+              ``agent_runners -> http_clients -> agent_factories``.
+            - If the resolved app has no dispatch config but ``default`` does,
+              dispatch falls back to ``default``.
+        """
         self._config = bridge_config or BridgeConfig()
         self._registry = registry
         self._interaction_handler = interaction_handler
@@ -339,75 +371,56 @@ class ChatBridge:
 
     async def _run_agent_prompt(self, app_name: str, prompt: QueuedPrompt, sender_key: str) -> RunResult:
         """Run the agent prompt for a specific app."""
+        dispatch_app_name = app_name
+        if not self._has_dispatch_target(app_name):
+            if not self._has_dispatch_target("default"):
+                return RunResult(
+                    ok=False,
+                    response="",
+                    error=f"No agent configured for app '{app_name}'",
+                )
+
+            logger.warning("No dispatch configured for app '%s', falling back to 'default'", app_name)
+            dispatch_app_name = "default"
+
+        try:
+            return await self._dispatch_for_app(dispatch_app_name, prompt, sender_key)
+        except Exception as exc:
+            if dispatch_app_name != app_name:
+                logger.exception(
+                    "Agent execution failed for resolved app '%s' (dispatching to '%s')",
+                    app_name,
+                    dispatch_app_name,
+                )
+            else:
+                logger.exception("Agent execution failed for app '%s'", app_name)
+            return RunResult(ok=False, response="", error=str(exc))
+
+    def _has_dispatch_target(self, app_name: str) -> bool:
+        return app_name in self._agent_runners or app_name in self._http_clients or app_name in self._agent_factories
+
+    async def _dispatch_for_app(self, app_name: str, prompt: QueuedPrompt, sender_key: str) -> RunResult:
+        """Dispatch a prompt to one configured app target."""
         session_mode = self._resolve_session_mode(app_name, sender_key)
         run_session_id = self._build_run_session_id(app_name, sender_key, prompt.id, session_mode)
 
-        try:
-            # Priority: custom runner > HTTP client > agent factory > error
-            if app_name in self._agent_runners:
-                runner = self._agent_runners[app_name]
-                if asyncio.iscoroutinefunction(runner):
-                    response = await runner(app_name, run_session_id, prompt.text)
-                else:
-                    response = runner(app_name, run_session_id, prompt.text)
-                return RunResult(ok=True, response=str(response))
+        if app_name in self._agent_runners:
+            runner = self._agent_runners[app_name]
+            if asyncio.iscoroutinefunction(runner):
+                response = await runner(app_name, run_session_id, prompt.text)
+            else:
+                response = runner(app_name, run_session_id, prompt.text)
+            return RunResult(ok=True, response=str(response))
 
-            if app_name in self._http_clients:
-                client = self._http_clients[app_name]
-                response = await client(run_session_id, prompt.text)
-                return RunResult(ok=True, response=str(response))
+        if app_name in self._http_clients:
+            client = self._http_clients[app_name]
+            response = await client(run_session_id, prompt.text)
+            return RunResult(ok=True, response=str(response))
 
-            if app_name in self._agent_factories:
-                return await self._run_with_adk_runner(app_name, prompt, sender_key, run_session_id)
+        if app_name in self._agent_factories:
+            return await self._run_with_adk_runner(app_name, prompt, sender_key, run_session_id)
 
-            # Fallback to default if no specific app configured
-            logger.warning("No dispatch configured for app '%s', falling back to 'default'", app_name)
-
-            if "default" in self._agent_runners:
-                default_session_mode = self._resolve_session_mode("default", sender_key)
-                default_run_session_id = self._build_run_session_id(
-                    "default",
-                    sender_key,
-                    prompt.id,
-                    default_session_mode,
-                )
-                runner = self._agent_runners["default"]
-                if asyncio.iscoroutinefunction(runner):
-                    response = await runner("default", default_run_session_id, prompt.text)
-                else:
-                    response = runner("default", default_run_session_id, prompt.text)
-                return RunResult(ok=True, response=str(response))
-
-            if "default" in self._http_clients:
-                default_session_mode = self._resolve_session_mode("default", sender_key)
-                default_run_session_id = self._build_run_session_id(
-                    "default",
-                    sender_key,
-                    prompt.id,
-                    default_session_mode,
-                )
-                client = self._http_clients["default"]
-                response = await client(default_run_session_id, prompt.text)
-                return RunResult(ok=True, response=str(response))
-
-            if "default" in self._agent_factories:
-                default_session_mode = self._resolve_session_mode("default", sender_key)
-                default_run_session_id = self._build_run_session_id(
-                    "default",
-                    sender_key,
-                    prompt.id,
-                    default_session_mode,
-                )
-                return await self._run_with_adk_runner("default", prompt, sender_key, default_run_session_id)
-
-            return RunResult(
-                ok=False,
-                response="",
-                error=f"No agent configured for app '{app_name}'",
-            )
-        except Exception as exc:
-            logger.exception("Agent execution failed for app '%s'", app_name)
-            return RunResult(ok=False, response="", error=str(exc))
+        return RunResult(ok=False, response="", error=f"No agent configured for app '{app_name}'")
 
     async def _run_with_adk_runner(
         self,
