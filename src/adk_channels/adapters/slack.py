@@ -16,6 +16,20 @@ logger = logging.getLogger("adk_channels.adapters.slack")
 MAX_LENGTH = 3000  # Slack block text limit; API limit is 4000 but leave margin
 
 
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"", "0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
 async def create_slack_adapter(config: AdapterConfig) -> BaseChannelAdapter:
     """Factory for creating a Slack adapter."""
     return SlackAdapter(config)
@@ -28,19 +42,14 @@ class SlackAdapter(BaseChannelAdapter):
 
     def __init__(self, config: AdapterConfig) -> None:
         super().__init__()
+        model_extra = config.model_extra or {}
         self._config = config
-        self._bot_token = str(config.model_extra.get("bot_token", "")) if config.model_extra else ""
-        self._app_token = str(config.model_extra.get("app_token", "")) if config.model_extra else ""
-        self._allowed_channel_ids: list[str] = (
-            list(config.model_extra.get("allowed_channel_ids", [])) if config.model_extra else []
-        )
-        self._respond_to_mentions_only = bool(
-            config.model_extra.get("respond_to_mentions_only", False) if config.model_extra else False
-        )
-        self._reply_in_thread_by_default = bool(
-            config.model_extra.get("reply_in_thread_by_default", True) if config.model_extra else True
-        )
-        self._slash_command = str(config.model_extra.get("slash_command", "/adk") if config.model_extra else "/adk")
+        self._bot_token = str(model_extra.get("bot_token", ""))
+        self._app_token = str(model_extra.get("app_token", ""))
+        self._allowed_channel_ids: list[str] = list(model_extra.get("allowed_channel_ids", [])) if model_extra else []
+        self._respond_to_mentions_only = _coerce_bool(model_extra.get("respond_to_mentions_only"), False)
+        self._reply_in_thread_by_default = _coerce_bool(model_extra.get("reply_in_thread_by_default"), True)
+        self._slash_command = str(model_extra.get("slash_command", "/adk"))
 
         if not self._bot_token:
             raise ValueError("Slack adapter requires bot_token (xoxb-...)")
