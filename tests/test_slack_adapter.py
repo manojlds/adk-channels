@@ -93,6 +93,94 @@ def test_translate_channel_app_mention_keeps_existing_thread() -> None:
     assert incoming.metadata["thread_ts"] == "1746044940.123400"
 
 
+def test_translate_channel_message_bot_mention_defaults_to_thread_session() -> None:
+    adapter = _make_adapter()
+    adapter._bot_user_id = "B123"
+
+    incoming = adapter._translate_event(
+        {
+            "channel": "C123",
+            "channel_type": "channel",
+            "user": "U123",
+            "ts": "1746044940.123400",
+            "text": "<@B123> deploy this",
+        },
+        "message",
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "C123:1746044940.123400"
+    assert incoming.text == "deploy this"
+    assert incoming.metadata["event_type"] == "app_mention"
+    assert incoming.metadata["thread_ts"] == "1746044940.123400"
+
+
+def test_mentions_only_marks_thread_continuation_as_existing_session_required() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            respond_to_mentions_only=True,
+        )
+    )
+    adapter._bot_user_id = "B123"
+
+    event = {
+        "channel": "C123",
+        "channel_type": "channel",
+        "user": "U456",
+        "ts": "1746044941.000001",
+        "thread_ts": "1746044940.123400",
+        "text": "continue without mentioning the bot",
+    }
+
+    assert adapter._should_handle_message_event(event) is True
+    follow_up = adapter._translate_event(event, "message")
+    assert follow_up is not None
+    assert follow_up.sender == "C123:1746044940.123400"
+    assert follow_up.metadata["event_type"] == "message"
+    assert follow_up.metadata["requires_existing_session"] is True
+
+
+def test_mentions_only_ignores_top_level_channel_message_without_mention() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            respond_to_mentions_only=True,
+        )
+    )
+
+    assert (
+        adapter._should_handle_message_event(
+            {
+                "channel": "C123",
+                "channel_type": "channel",
+                "user": "U123",
+                "ts": "1746044940.123400",
+                "text": "not for the bot",
+            }
+        )
+        is False
+    )
+
+
+def test_deduplicates_message_and_app_mention_events_for_same_slack_message() -> None:
+    adapter = _make_adapter()
+    event = {
+        "channel": "C123",
+        "channel_type": "channel",
+        "user": "U123",
+        "ts": "1746044940.123400",
+        "text": "<@B123> deploy this",
+    }
+
+    assert adapter._claim_event(event) is True
+    assert adapter._claim_event(event) is False
+
+
 def test_translate_dm_app_mention_does_not_create_thread() -> None:
     adapter = _make_adapter()
 
@@ -166,11 +254,13 @@ def test_slack_boolean_config_coerces_env_style_strings() -> None:
             app_token="xapp-test",
             respond_to_mentions_only="true",
             reply_in_thread_by_default="false",
+            continue_threads_without_mention="false",
         )
     )
 
     assert adapter._respond_to_mentions_only is True
     assert adapter._reply_in_thread_by_default is False
+    assert adapter._continue_threads_without_mention is False
 
 
 def test_build_tool_blocks_formats_interactions() -> None:

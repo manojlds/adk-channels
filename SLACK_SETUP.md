@@ -68,6 +68,15 @@ Recommended:
 
 After adding scopes, **reinstall the app** to your workspace.
 
+### Event Subscriptions
+
+In **Event Subscriptions**, enable events and subscribe the bot to:
+
+- `app_mention` — Required for @mentions in channels
+- `message.im` — Required for DMs
+- `message.channels` — Required to continue public-channel threads without re-mentioning the bot
+- `message.groups` — Required to continue private-channel threads without re-mentioning the bot
+
 ## 5. Install the App to Your Workspace
 
 1. Go to **OAuth & Permissions**
@@ -96,6 +105,9 @@ No invitation needed — just open a DM with the bot.
 # Required: Slack tokens
 export SLACK_BOT_TOKEN="xoxb-your-bot-token-here"
 export SLACK_APP_TOKEN="xapp-your-app-token-here"
+
+# Optional: durable ADK session database used by examples
+export ADK_CHANNELS_SESSION_DB=".adk_channels/sessions.sqlite"
 
 # Option A: Google Gemini (default)
 export MODEL="gemini-2.0-flash"
@@ -130,6 +142,7 @@ You should see:
 ============================================================
 ADK Slack Agent Server
 ============================================================
+Sessions:  .adk_channels/sessions.sqlite
 Health:    http://0.0.0.0:8000/channels/health
 Status:    http://0.0.0.0:8000/channels/status
 ============================================================
@@ -148,7 +161,8 @@ In Slack: DM the bot, @mention it, or use /adk <msg>
 ### @Mention in a Channel
 1. Go to a channel where you invited the bot
 2. Type: `@ADK Assistant what is the weather today?`
-3. The bot should reply in the channel
+3. The bot should reply in a thread under your message
+4. Reply in that thread without mentioning the bot; if `message.channels` or `message.groups` is subscribed, the bot should continue the same conversation
 
 ### Slash Command
 If you configured `/adk` as the slash command:
@@ -166,6 +180,12 @@ If you configured `/adk` as the slash command:
 - Invite the bot to the channel (`/invite @BotName`)
 - Check that `app_mentions:read` scope is granted
 - Ensure `channels:history` scope is granted
+- Ensure the `app_mention` bot event is subscribed in Event Subscriptions
+
+### Bot doesn't continue a channel thread
+- Subscribe to `message.channels` for public channels and `message.groups` for private channels
+- Keep `ADK_CHANNELS_ADAPTERS__SLACK__CONTINUE_THREADS_WITHOUT_MENTION=true` or leave it unset
+- Make sure the thread has an existing durable ADK session; mention the bot once inside the thread to create or resume one
 
 ### Bot doesn't respond to slash commands
 - Go to **Slash Commands** in your Slack app settings

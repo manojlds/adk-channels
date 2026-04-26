@@ -265,11 +265,12 @@ Use this when you need multiple specialized agents behind one channel layer.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import uvicorn
 from fastapi import FastAPI
 from google.adk.agents import Agent
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.sqlite_session_service import SqliteSessionService
 
 from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge, ToolActionRouter
 from adk_channels.config import AdapterConfig
@@ -304,6 +305,12 @@ CHANNEL_MAP = {
     "C0SUPPORT123": "support",
     "C0ENG123456": "engineering",
 }
+SESSION_DB = Path(os.environ.get("ADK_CHANNELS_SESSION_DB", ".adk_channels/sessions.sqlite"))
+
+
+def create_session_service() -> SqliteSessionService:
+    SESSION_DB.parent.mkdir(parents=True, exist_ok=True)
+    return SqliteSessionService(str(SESSION_DB))
 
 
 def app_resolver(message) -> str:
@@ -347,7 +354,7 @@ def main() -> None:
             "engineering": engineering_agent,
             "default": default_agent,
         },
-        session_service_factory=InMemorySessionService,
+        session_service_factory=create_session_service,
         interaction_handler=create_router(),
     )
 

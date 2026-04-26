@@ -17,9 +17,16 @@ Usage:
 
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import logging
 import os
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 import uvicorn
 from dotenv import load_dotenv
@@ -34,9 +41,9 @@ from examples.agents import (
     create_tool_action_router,
     resolve_model,
 )
+from examples.session_service import create_sqlite_session_service, resolve_session_db_path
 
 # Load .env from project root (one level up from this file)
-PROJECT_ROOT = Path(__file__).parent.parent
 load_dotenv(PROJECT_ROOT / ".env")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
@@ -63,6 +70,7 @@ def main() -> None:
             type="slack",
             bot_token=bot_token,
             app_token=app_token,
+            respond_to_mentions_only=True,
         )
 
     config.bridge.enabled = True
@@ -76,6 +84,7 @@ def main() -> None:
         registry=registry,
         agent_factory=lambda: create_interactive_files_agent(model=model),
         interaction_handler=interaction_router,
+        session_service_factory=create_sqlite_session_service,
     )
 
     fastapi_app = FastAPI(
@@ -99,6 +108,7 @@ def main() -> None:
     logger.info("ADK Slack Agent Server")
     logger.info("=" * 60)
     logger.info("Model:     %s", model)
+    logger.info("Sessions:  %s", resolve_session_db_path())
     logger.info("Health:    http://0.0.0.0:8000/channels/health")
     logger.info("Status:    http://0.0.0.0:8000/channels/status")
     logger.info("=" * 60)

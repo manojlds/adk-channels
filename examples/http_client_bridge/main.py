@@ -24,15 +24,24 @@ Usage:
 
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
 from google.adk.agents import Agent
-from google.adk.sessions import InMemorySessionService
+from google.adk.sessions.base_session_service import BaseSessionService
 from google.genai.types import Content, Part
 
 from examples.agents import create_engineering_agent, create_support_agent, resolve_model
+from examples.session_service import create_sqlite_session_service, resolve_session_db_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("http_client_bridge")
@@ -48,11 +57,11 @@ class InternalADKClient:
     HTTP calls but actually invoke Runners directly for simplicity.
     """
 
-    def __init__(self, agent: Agent, app_name: str, base_url: str = "") -> None:
+    def __init__(self, agent: Agent, app_name: str, session_service: BaseSessionService, base_url: str = "") -> None:
         self.agent = agent
         self.app_name = app_name
         self.base_url = base_url
-        self.session_service = InMemorySessionService()  # type: ignore[no-untyped-call]
+        self.session_service = session_service
 
     async def call(self, session_id: str, text: str) -> str:
         """Call the ADK agent and return the response text."""
@@ -115,6 +124,7 @@ def main() -> None:
                 type="slack",
                 bot_token=bot_token,
                 app_token=app_token,
+                respond_to_mentions_only=True,
             )
         else:
             logger.error("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN")
@@ -128,8 +138,9 @@ def main() -> None:
     eng_agent = create_engineering_agent(model=model)
 
     # Create HTTP clients
-    support_client = InternalADKClient(support_agent, "support")
-    eng_client = InternalADKClient(eng_agent, "engineering")
+    session_service = create_sqlite_session_service()
+    support_client = InternalADKClient(support_agent, "support", session_service)
+    eng_client = InternalADKClient(eng_agent, "engineering", session_service)
 
     # Create registry and bridge
     registry = ChannelRegistry()
@@ -176,6 +187,7 @@ def main() -> None:
         return {"status": "ok", "mode": "http-client-bridge"}
 
     logger.info("Starting server on http://0.0.0.0:8000")
+    logger.info("ADK sessions: %s", resolve_session_db_path())
     logger.info("ADK endpoints: POST /agents/{support,engineering}/run")
     logger.info("Channels health: GET /channels/health")
     logger.info("Channels status: GET /channels/status")

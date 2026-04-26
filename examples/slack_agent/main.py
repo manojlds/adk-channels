@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+# ruff: noqa: E402, I001
+
 import asyncio
 import logging
 import os
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from google.adk.agents import Agent
 
 from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge
 from examples.agents import create_interactive_files_agent, create_tool_action_router, resolve_model
+from examples.session_service import create_sqlite_session_service, resolve_session_db_path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("slack_agent")
@@ -44,6 +53,7 @@ async def run_bridge() -> None:
                 type="slack",
                 bot_token=bot_token,
                 app_token=app_token,
+                respond_to_mentions_only=True,
             )
         else:
             logger.error(
@@ -74,6 +84,7 @@ async def run_bridge() -> None:
         registry=registry,
         agent_factory=lambda: agent,
         interaction_handler=interaction_router,
+        session_service_factory=create_sqlite_session_service,
     )
     bridge.start()
 
@@ -85,6 +96,7 @@ async def run_bridge() -> None:
     await registry.start_listening()
 
     logger.info("Slack agent is running. Press Ctrl+C to stop.")
+    logger.info("ADK sessions: %s", resolve_session_db_path())
 
     try:
         while True:
