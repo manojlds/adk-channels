@@ -6,12 +6,14 @@ Inspired by [pi-channels](https://github.com/espennilsen/pi/tree/main/extensions
 
 ## Features
 
-- **Slack adapter** — bidirectional via Bolt + Socket Mode; supports @mentions, slash commands, threads, and channel allowlisting
+- **Slack adapter** — bidirectional via Bolt + Socket Mode; supports @mentions, slash commands, threads, interactive actions, and channel allowlisting
 - **Telegram adapter** — bidirectional via Bot API with polling
 - **Webhook adapter** — outgoing HTTP POST to any URL with customizable headers and payload modes
 - **Chat bridge** — incoming messages are routed to your ADK agent; responses sent back automatically
-- **Per-sender sessions** — persistent conversation memory per user, or stateless mode per message
+- **Configurable session keys** — persist by sender/user/channel/thread with optional per-pattern rules
 - **Queue management** — FIFO queue per sender with configurable depth and concurrency limits
+- **Tool interaction runtime** — `ToolActionRouter` handles Slack action callbacks before agent execution
+- **Generative UI helpers** — build approval/select/info tool payloads with `tool_approval`, `tool_single_select`, `tool_multi_select`, `tool_info`
 - **Route aliases** — friendly names for adapter+recipient combos (e.g. `ops` → `slack:#alerts`)
 
 ## Quick Start
@@ -29,6 +31,18 @@ uv pip install adk-channels[slack]
 uv pip install adk-channels[all]
 ```
 
+### Setup Levels
+
+Pick one path based on how much capability you need right now:
+
+| Level | Best For | Bridge | Example |
+|------|----------|--------|---------|
+| Basic | One agent, plain chat, fastest setup | `ChatBridge` | `examples/basic_slack_agent.py` |
+| Intermediate | Tool-driven Slack interactions (approval/select/info) | `ChatBridge` + `ToolActionRouter` | `examples/slack_fastapi.py` |
+| Advanced | Multi-agent routing, FastAPI deployment, per-app behavior | `MultiAppBridge` + `ToolActionRouter` | `examples/multi_app_server/main.py` |
+
+Need full copy/paste files? See `TEMPLATES.md` for complete Basic/Intermediate/Advanced templates.
+
 ### Slack Setup
 
 1. Create a Slack app at https://api.slack.com/apps
@@ -39,6 +53,7 @@ uv pip install adk-channels[all]
    - `app_mentions:read`
    - `commands` (if using slash commands)
    - `im:history`, `channels:history`, `groups:history` (as needed)
+5. Enable **Interactivity & Shortcuts** if you use block buttons/selects in messages
 
 ### Environment Variables
 
@@ -55,60 +70,61 @@ export ADK_CHANNELS_ADAPTERS__SLACK__ALLOWED_CHANNEL_IDS='["C0123456789"]'
 export ADK_CHANNELS_ADAPTERS__SLACK__RESPOND_TO_MENTIONS_ONLY=true
 ```
 
-### Example: Slack Agent
+### Basic Setup (Single Agent)
 
-```python
-import asyncio
-import os
-from adk_channels import ChannelRegistry, ChatBridge, ChannelsConfig
-from google.adk.agents import Agent
-from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
+Step-by-step:
 
+1. Configure Slack env vars (shown above).
+2. Run the minimal single-agent example:
 
-def create_agent() -> Agent:
-    return Agent(
-        model="gemini-2.0-flash",
-        name="slack_assistant",
-        instruction="You are a helpful AI assistant in Slack. Keep responses concise and use markdown.",
-    )
-
-
-async def main():
-    config = ChannelsConfig()
-    config.bridge.enabled = True
-
-    registry = ChannelRegistry()
-    await registry.load_config(config)
-
-    bridge = ChatBridge(
-        bridge_config=config.bridge,
-        registry=registry,
-        agent_factory=create_agent,
-    )
-    bridge.start()
-
-    registry.set_on_incoming(bridge.handle_message)
-    await registry.start_listening()
-
-    print("Agent is running on Slack. Press Ctrl+C to stop.")
-    while True:
-        await asyncio.sleep(1)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-Run it:
 ```bash
-uv run python your_agent.py
+uv run python examples/basic_slack_agent.py
 ```
 
-Then in Slack:
-- DM the bot directly
-- @mention the bot in a channel: `@YourBot what is the weather?`
-- Use a slash command: `/adk write a python function to reverse a string`
+3. In Slack, DM or @mention the bot.
+
+What you get:
+- One ADK agent behind `ChatBridge`
+- Session memory + queue management
+- No explicit interaction routing required
+
+### Intermediate Setup (Tool-Driven Slack UI)
+
+Step-by-step:
+
+1. Keep the same Slack env vars and ensure Interactivity is enabled in your Slack app.
+2. Run the interactive tool example:
+
+```bash
+uv run python examples/slack_fastapi.py
+```
+
+3. In Slack, ask for tool workflows (examples):
+   - `list internal files`
+   - `delete deployment-plan.md`
+   - `choose multiple files for cleanup`
+
+What you get:
+- Structured tool payload rendering (`tool_approval`, `tool_multi_select`, etc.)
+- Action callback handling through `ToolActionRouter`
+- Native Slack buttons/selects with ADK tool semantics
+
+### Advanced Setup (Multi-App FastAPI Deployment)
+
+Step-by-step:
+
+1. Define per-channel or per-message routing logic in `app_resolver`.
+2. Configure multiple agent backends (`support`, `engineering`, `default`, etc.).
+3. Run multi-app example:
+
+```bash
+uv run python examples/multi_app_server/main.py
+```
+
+What you get:
+- One Slack app, multiple ADK agent apps
+- Per-app sessions and routing
+- Optional interaction handling before app dispatch via `interaction_handler`
 
 ## FastAPI + Multi-App Deployment
 
@@ -220,6 +236,7 @@ app = create_fastapi_app(
         "engineering": eng_agent,
     },
     app_resolver=lambda msg: "support" if "help" in msg.text else "engineering",
+    interaction_handler=router,
 )
 ```
 
@@ -286,6 +303,7 @@ Example `channels.json`:
   "bridge": {
     "enabled": true,
     "session_mode": "persistent",
+    "session_scope": "sender",
     "max_concurrent": 2
   }
 }
@@ -309,7 +327,117 @@ Example `channels.json`:
 - Responds to @mentions in channels (if `respond_to_mentions_only` is false, responds to all messages in allowed channels)
 - Supports slash commands with instant acknowledgment
 - Thread-aware: replies in the same thread
+- Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
+- Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)
+
+**Interactive tool prompts:**
+
+```python
+from adk_channels import ChannelMessage, build_tool_actions_blocks, build_tool_button
+
+blocks = build_tool_actions_blocks(
+    prompt_text="Choose the next step:",
+    buttons=[
+        build_tool_button(label="Run tests", tool_name="ci", action="run_tests", value={"suite": "quick"}),
+        build_tool_button(label="Cancel", tool_name="ci", action="cancel", style="danger"),
+    ],
+)
+
+await registry.send(
+    ChannelMessage(
+        adapter="slack",
+        recipient="C0123456789",
+        text="Interactive tool prompt",
+        metadata={"slack_blocks": blocks},
+    )
+)
+```
+
+When a user clicks a button/select, the Slack adapter emits an `IncomingMessage` with:
+- `text`: `action:<action_id> value:<value>`
+- `metadata.event_type`: `block_action`
+- `metadata.tool_name` and `metadata.tool_action` when `action_id` follows `adk.tool.<tool>.<action>`
+
+### Tool UI Runtime (Slack Generative UI)
+
+For ADK tool-driven apps, use this three-part pattern:
+
+1. Tool returns structured payload (message + interactive controls)
+2. Slack adapter renders it into native blocks/actions
+3. `ToolActionRouter` handles action callbacks and optionally short-circuits the bridge
+
+#### Tool payload helpers
+
+```python
+from adk_channels import tool_approval, tool_info, tool_multi_select
+
+def request_delete(file_name: str) -> dict:
+    request_id = "req-123"
+    return tool_approval(
+        message=f"Approval requested to delete `{file_name}`.",
+        tool_name="approval",
+        value={"request_id": request_id},
+        actions_text=f"Approve deleting `{file_name}`?",
+        block_id=f"approval_{request_id}",
+    )
+
+def pick_targets() -> dict:
+    return tool_multi_select(
+        message="Waiting for selection.",
+        tool_name="options",
+        action="choose",
+        options=["backend", "frontend", "qa"],
+        placeholder="Select targets",
+    )
+
+def list_items() -> dict:
+    return tool_info("Available items: backend, frontend, qa")
+```
+
+#### Action routing
+
+```python
+from adk_channels import ToolActionRouter
+
+router = ToolActionRouter()
+
+@router.on_tool("approval", "approve")
+@router.on_tool("approval", "reject")
+def handle_approval(ctx):
+    payload = ctx.action_value_json()
+    request_id = payload.get("request_id")
+    decision = ctx.tool_action
+    return f"Recorded decision {decision} for request {request_id}"
+
+@router.on_tool("options", "choose")
+def handle_options(ctx):
+    selected = ctx.action_values()
+    return f"Selected options: {', '.join(selected) if selected else 'none'}"
+```
+
+Pass the router into either bridge:
+
+```python
+bridge = ChatBridge(..., interaction_handler=router)
+# or
+multi = MultiAppBridge(..., interaction_handler=router)
+```
+
+If a handler returns:
+- `str` -> bridge sends a reply to the same adapter+sender
+- `ChannelMessage` or `list[ChannelMessage]` -> bridge sends those messages
+- `True` -> handled, no reply
+- `False`/`None` -> unhandled, message continues to normal agent routing
+
+#### Tool UI patterns
+
+| Pattern | Helper | Typical Use |
+|---------|--------|-------------|
+| Info | `tool_info` | Simple status/result cards |
+| Approval | `tool_approval` | Destructive operations, human-in-the-loop controls |
+| Single select | `tool_single_select` | Pick one environment/owner/version |
+| Multi select | `tool_multi_select` | Pick multiple files/services/targets |
 
 ### Telegram
 
@@ -362,8 +490,19 @@ The bridge connects incoming messages to your ADK agent:
 
 ### Session Modes
 
-- **`persistent`** (default): Uses the same ADK session per sender, maintaining conversation history
-- **`stateless`**: Creates a new isolated session per message (no memory)
+- **`persistent`** (default): Reuses the same ADK session for the resolved session key
+- **`stateless`**: Creates a new isolated ADK session for each message
+
+### Session Scope
+
+Choose how the bridge derives the session key:
+
+- **`sender`** (default): Adapter sender ID (`slack:C123` or `slack:C123:thread_ts`)
+- **`user`**: Prefer `metadata.user_id` (falls back to sender)
+- **`channel`**: Channel/chat level memory
+- **`thread`**: Thread-level memory when thread metadata exists
+
+Use `session_rules` with glob patterns to override mode for subsets of traffic (for example, keep DMs persistent while making shared channels stateless).
 
 ### Bridge Config
 
@@ -371,6 +510,7 @@ The bridge connects incoming messages to your ADK agent:
 |-----|---------|-------------|
 | `enabled` | `false` | Enable the bridge |
 | `session_mode` | `"persistent"` | `"persistent"` or `"stateless"` |
+| `session_scope` | `"sender"` | `"sender"`, `"user"`, `"channel"`, or `"thread"` |
 | `session_rules` | `[]` | Per-sender mode overrides (glob patterns) |
 | `idle_timeout_minutes` | `30` | Kill idle persistent sessions after N min |
 | `max_queue_per_sender` | `5` | Max queued messages per sender |
@@ -391,6 +531,17 @@ bridge = ChatBridge(
     bridge_config=config.bridge,
     registry=registry,
     agent_runner=my_runner,
+)
+```
+
+`ChatBridge` and `MultiAppBridge` also accept `interaction_handler` for action callbacks:
+
+```python
+bridge = ChatBridge(
+    bridge_config=config.bridge,
+    registry=registry,
+    agent_factory=create_agent,
+    interaction_handler=router,  # ToolActionRouter or custom callable
 )
 ```
 
@@ -431,6 +582,76 @@ class MyAdapter(BaseChannelAdapter):
 
 registry.register("custom", MyAdapter())
 ```
+
+## ADK Implementation Guide (End-to-End)
+
+Use this blueprint when integrating channels into a real ADK app.
+
+### Basic Track (Single Agent Chat)
+
+1. Build one ADK agent.
+2. Configure one adapter (usually Slack first).
+3. Use `ChatBridge` without `interaction_handler`.
+4. Start listening via `registry.set_on_incoming(bridge.handle_message)` and `registry.start_listening()`.
+
+Use this when you just need chat + memory + queueing.
+
+### Intermediate Track (Tool-Driven Generative UI)
+
+1. Keep `ChatBridge` and add tools that return structured payloads (`tool_approval`, `tool_single_select`, `tool_multi_select`, `tool_info`).
+2. Create a `ToolActionRouter` and register handlers for tool actions.
+3. Pass router as `interaction_handler` to `ChatBridge`.
+4. Keep tool outputs deterministic and include IDs (`request_id`, task IDs) for idempotency.
+
+Use this when users need approvals, selections, and interactive Slack controls.
+
+### Advanced Track (Multi-App + FastAPI)
+
+1. Split responsibilities into multiple agents/apps (`support`, `engineering`, `ops`, etc.).
+2. Route with `app_resolver` in `MultiAppBridge`.
+3. Add `interaction_handler` to run interactive callbacks before app routing.
+4. Use shared/persistent session services where needed.
+5. Expose health/status/webhook endpoints through `ChannelsFastAPIIntegration`.
+
+Use this for production setups with multiple agent domains and channel routing rules.
+
+### Production Checklist
+
+1. **Session strategy**
+   - Set `session_mode` (`persistent` or `stateless`)
+   - Set `session_scope` (`sender`, `user`, `channel`, `thread`)
+   - Add `session_rules` for mixed policies
+
+2. **Reliability**
+   - Configure `max_queue_per_sender`, `max_concurrent`, `timeout_ms`
+   - Use route aliases for stable destinations
+   - Monitor `/channels/health` and `/channels/status`
+
+3. **Security and governance**
+   - Restrict Slack channels with `allowed_channel_ids`
+   - Avoid exposing raw secrets in tool payloads
+   - Log request/action IDs for audits
+
+4. **Cross-channel design**
+   - Keep tool logic channel-agnostic
+   - Provide fallback text for non-interactive channels
+   - Treat Slack UI hints as optional rendering metadata
+
+### Example architecture for tool-heavy ADK bots
+
+```text
+User -> Slack message/action
+     -> Slack adapter
+     -> (optional) interaction_handler (ToolActionRouter)
+         -> side-effect + confirmation reply
+         -> OR pass-through to bridge
+     -> ChatBridge / MultiAppBridge
+     -> ADK runner
+     -> Tool call / tool result
+     -> Slack adapter renders UI blocks
+```
+
+This gives you a generative UI flow similar to web chat apps, but native to Slack.
 
 ## Development
 
