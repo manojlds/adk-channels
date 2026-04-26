@@ -67,6 +67,10 @@ export ADK_CHANNELS_BRIDGE__ENABLED=true
 # Optional: restrict to specific channels
 export ADK_CHANNELS_ADAPTERS__SLACK__ALLOWED_CHANNEL_IDS='["C0123456789"]'
 
+# Optional: customize per-workspace reaction names, without surrounding colons
+export ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION=eyes
+export ADK_CHANNELS_ADAPTERS__SLACK__COMPLETED_REACTION=white_check_mark
+
 # Optional: only respond to @mentions in channels
 export ADK_CHANNELS_ADAPTERS__SLACK__RESPOND_TO_MENTIONS_ONLY=true
 
@@ -270,6 +274,8 @@ Use double underscores (`__`) as nested delimiters:
 ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack
 ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN=xoxb-...
 ADK_CHANNELS_ADAPTERS__SLACK__APP_TOKEN=xapp-...
+ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION=eyes
+ADK_CHANNELS_ADAPTERS__SLACK__COMPLETED_REACTION=white_check_mark
 
 # Routes
 ADK_CHANNELS_ROUTES__OPS__ADAPTER=slack
@@ -340,7 +346,7 @@ Example `channels.json`:
 | `reply_in_thread_by_default` | `boolean` | For top-level channel @mentions, reply in a new thread and use that thread as sender/session key (default: `true`) |
 | `continue_threads_without_mention` | `boolean` | Continue bot-started channel threads when users reply without @mentioning the bot (default: `true`) |
 | `slash_command` | `string` | Slash command to register (default: `/adk`) |
-| `processing_reaction` | `string` | Optional reaction name to add when a Slack message is accepted for processing; requires `reactions:write` |
+| `processing_reaction` | `string` | Optional reaction name to add when a Slack message/app mention is accepted for processing; removed when the reply is sent; requires `reactions:write` |
 | `completed_reaction` | `string` | Optional reaction name to add after a reply is sent; requires `reactions:write` |
 
 **Startup checks:**
@@ -358,7 +364,7 @@ Example `channels.json`:
 - Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
 - Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)
-- Optional processing/completed reactions when `reactions:write` is available
+- Optional processing/completed reactions when `reactions:write` is available. Use Slack reaction names without colons, e.g. `eyes`, `hourglass_flowing_sand`, or a workspace custom emoji name. Processing reactions apply to Slack message and app mention events; slash commands and interactive actions use their acknowledgement/response flow instead.
 
 **Interactive tool prompts:**
 

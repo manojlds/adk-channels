@@ -49,6 +49,13 @@ def _coerce_bool(value: Any, default: bool) -> bool:
     return default
 
 
+def _coerce_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 async def create_slack_adapter(config: AdapterConfig) -> BaseChannelAdapter:
     """Factory for creating a Slack adapter."""
     return SlackAdapter(config)
@@ -70,8 +77,8 @@ class SlackAdapter(BaseChannelAdapter):
         self._reply_in_thread_by_default = _coerce_bool(model_extra.get("reply_in_thread_by_default"), True)
         self._continue_threads_without_mention = _coerce_bool(model_extra.get("continue_threads_without_mention"), True)
         self._slash_command = str(model_extra.get("slash_command", "/adk"))
-        self._processing_reaction = self._coerce_optional_str(model_extra.get("processing_reaction"))
-        self._completed_reaction = self._coerce_optional_str(model_extra.get("completed_reaction"))
+        self._processing_reaction = _coerce_optional_str(model_extra.get("processing_reaction"))
+        self._completed_reaction = _coerce_optional_str(model_extra.get("completed_reaction"))
 
         if not self._bot_token:
             raise ValueError("Slack adapter requires bot_token (xoxb-...)")
@@ -87,13 +94,6 @@ class SlackAdapter(BaseChannelAdapter):
         self._last_event_prune_at = 0.0
         self._granted_scopes: set[str] = set()
         self._capabilities: dict[str, bool] = dict.fromkeys(CAPABILITY_SCOPES, False)
-
-    @staticmethod
-    def _coerce_optional_str(value: Any) -> str | None:
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
 
     def get_status(self) -> dict[str, Any]:
         """Return Slack adapter startup-discovered status.
@@ -214,8 +214,8 @@ class SlackAdapter(BaseChannelAdapter):
         except Exception as exc:
             raise RuntimeError("Slack startup check failed: bot_token could not be authenticated") from exc
 
-        self._bot_user_id = self._coerce_optional_str(auth_result.get("user_id"))
-        self._team_id = self._coerce_optional_str(auth_result.get("team_id"))
+        self._bot_user_id = _coerce_optional_str(auth_result.get("user_id"))
+        self._team_id = _coerce_optional_str(auth_result.get("team_id"))
         self._granted_scopes = self._extract_granted_scopes(auth_result)
         self._validate_scope_check(self._granted_scopes)
         self._capabilities = self._build_capabilities(self._granted_scopes)
@@ -391,21 +391,33 @@ class SlackAdapter(BaseChannelAdapter):
         except Exception:
             logger.debug("Failed to add Slack reaction %s", reaction, exc_info=True)
 
+    async def _remove_reaction(self, channel: str | None, timestamp: str | None, reaction: str | None) -> None:
+        if not channel or not timestamp or not reaction or not self._capabilities.get("reactions", False):
+            return
+
+        web = self._web_client
+        if web is None:
+            return
+
+        try:
+            await web.reactions_remove(channel=channel, timestamp=timestamp, name=reaction)
+        except Exception:
+            logger.debug("Failed to remove Slack reaction %s", reaction, exc_info=True)
+
     async def _add_processing_reaction(self, event: dict[str, Any]) -> None:
         await self._add_reaction(
-            self._coerce_optional_str(event.get("channel")),
-            self._coerce_optional_str(event.get("ts")),
+            _coerce_optional_str(event.get("channel")),
+            _coerce_optional_str(event.get("ts")),
             self._processing_reaction,
         )
 
     async def _add_completed_reaction(self, metadata: dict[str, Any]) -> None:
         """Add the configured completion reaction to the originating Slack message."""
         # message_ts comes from block actions; timestamp comes from regular message events.
-        await self._add_reaction(
-            self._coerce_optional_str(metadata.get("channel_id")),
-            self._coerce_optional_str(metadata.get("message_ts") or metadata.get("timestamp")),
-            self._completed_reaction,
-        )
+        channel = _coerce_optional_str(metadata.get("channel_id"))
+        timestamp = _coerce_optional_str(metadata.get("message_ts") or metadata.get("timestamp"))
+        await self._remove_reaction(channel, timestamp, self._processing_reaction)
+        await self._add_reaction(channel, timestamp, self._completed_reaction)
 
     @staticmethod
     def _format_tool_interaction(interaction: dict[str, Any]) -> str:

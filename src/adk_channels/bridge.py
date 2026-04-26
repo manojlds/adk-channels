@@ -30,6 +30,8 @@ from adk_channels.types import (
 logger = logging.getLogger("adk_channels.bridge")
 
 _id_counter = 0
+# Metadata keys preserved when the bridge turns an inbound prompt into an outbound reply.
+# Add adapter entries only for metadata required by adapter-level routing/rendering.
 _REPLY_METADATA_KEYS_BY_ADAPTER = {
     "slack": frozenset({"channel_id", "message_ts", "thread_ts", "timestamp"}),
 }

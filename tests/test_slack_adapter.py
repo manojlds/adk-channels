@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from adk_channels.adapters.slack import SlackAdapter, _coerce_bool
+from adk_channels.adapters.slack import SlackAdapter, _coerce_bool, _coerce_optional_str
 from adk_channels.config import AdapterConfig
 from adk_channels.types import ChannelMessage
 
@@ -19,12 +19,16 @@ class _FakeSlackWebClient:
     def __init__(self) -> None:
         self.messages: list[dict[str, object]] = []
         self.reactions: list[dict[str, str]] = []
+        self.removed_reactions: list[dict[str, str]] = []
 
     async def chat_postMessage(self, **kwargs: object) -> None:  # noqa: N802
         self.messages.append(kwargs)
 
     async def reactions_add(self, channel: str, timestamp: str, name: str) -> None:
         self.reactions.append({"channel": channel, "timestamp": timestamp, "name": name})
+
+    async def reactions_remove(self, channel: str, timestamp: str, name: str) -> None:
+        self.removed_reactions.append({"channel": channel, "timestamp": timestamp, "name": name})
 
 
 class _FailingAuthWebClient:
@@ -295,9 +299,9 @@ def test_slack_boolean_config_uses_default_for_unknown_values() -> None:
 
 
 def test_slack_optional_string_config_trims_and_drops_empty_values() -> None:
-    assert SlackAdapter._coerce_optional_str(None) is None
-    assert SlackAdapter._coerce_optional_str("  ") is None
-    assert SlackAdapter._coerce_optional_str(" eyes ") == "eyes"
+    assert _coerce_optional_str(None) is None
+    assert _coerce_optional_str("  ") is None
+    assert _coerce_optional_str(" eyes ") == "eyes"
 
 
 def test_extracts_slack_scopes_from_auth_response_header() -> None:
@@ -428,6 +432,27 @@ async def test_send_skips_completed_reaction_without_reactions_scope() -> None:
 
     assert fake_web.messages
     assert fake_web.reactions == []
+
+
+@pytest.mark.asyncio
+async def test_add_completed_reaction_removes_processing_reaction_first() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="eyes",
+            completed_reaction="white_check_mark",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+    adapter._capabilities["reactions"] = True
+
+    await adapter._add_completed_reaction({"channel_id": "C123", "timestamp": "1746044941.000001"})
+
+    assert fake_web.removed_reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "eyes"}]
+    assert fake_web.reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "white_check_mark"}]
 
 
 @pytest.mark.asyncio
