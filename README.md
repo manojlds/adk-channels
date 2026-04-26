@@ -39,7 +39,7 @@ Pick one path based on how much capability you need right now:
 |------|----------|--------|---------|
 | Basic | One agent, plain chat, fastest setup | `ChatBridge` | `examples/basic_slack_agent.py` |
 | Intermediate | Tool-driven Slack interactions (approval/select/info) | `ChatBridge` + `ToolActionRouter` | `examples/slack_fastapi.py` |
-| Advanced | Multi-agent routing, FastAPI deployment, per-app behavior | `MultiAppBridge` + `ToolActionRouter` | `examples/multi_app_server/main.py` |
+| Advanced | Multi-agent routing, FastAPI deployment, per-app behavior | `ChatBridge` + `app_resolver` + `ToolActionRouter` | `examples/multi_app_server/main.py` |
 
 Need full copy/paste files? See `TEMPLATES.md` for complete Basic/Intermediate/Advanced templates.
 
@@ -134,8 +134,8 @@ In production ADK deployments, you typically run multiple agent "apps" as FastAP
 FastAPI App
 ├── /agents/support/run          (ADK support agent endpoint)
 ├── /agents/engineering/run      (ADK engineering agent endpoint)
-├── /channels/webhook/{adapter}  (Channel webhook receivers)
 ├── /channels/health             (Channels healthcheck)
+├── /channels/status             (Channels status)
 └── Background: Slack Socket Mode, Telegram polling
 ```
 
@@ -145,8 +145,7 @@ FastAPI App
 from fastapi import FastAPI
 from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
-from adk_channels import ChannelsConfig, ChannelRegistry
-from adk_channels.multi_app_bridge import MultiAppBridge
+from adk_channels import ChannelsConfig, ChannelRegistry, ChatBridge
 from adk_channels.server_integration import ChannelsFastAPIIntegration
 import uvicorn
 
@@ -180,7 +179,7 @@ app = FastAPI(title="ADK Multi-App Server")
 config = ChannelsConfig()
 registry = ChannelRegistry()
 
-bridge = MultiAppBridge(
+bridge = ChatBridge(
     bridge_config=config.bridge,
     registry=registry,
     app_resolver=app_resolver,
@@ -217,7 +216,7 @@ The `app_resolver` function is called for every incoming message. You can route 
 
 ### Dispatch Patterns
 
-`MultiAppBridge` supports three ways to invoke agents (checked in order):
+`ChatBridge` with `app_resolver` supports three ways to invoke agents (checked in order):
 
 1. **`agent_runners`** — Custom async/sync callables: `runner(app_name, session_id, text) -> str`
 2. **`http_clients`** — HTTP clients that call ADK endpoints internally: `client(session_id, text) -> str`
@@ -420,8 +419,6 @@ Pass the router into either bridge:
 
 ```python
 bridge = ChatBridge(..., interaction_handler=router)
-# or
-multi = MultiAppBridge(..., interaction_handler=router)
 ```
 
 If a handler returns:
@@ -534,7 +531,7 @@ bridge = ChatBridge(
 )
 ```
 
-`ChatBridge` and `MultiAppBridge` also accept `interaction_handler` for action callbacks:
+`ChatBridge` accepts `interaction_handler` for action callbacks:
 
 ```python
 bridge = ChatBridge(
@@ -608,10 +605,10 @@ Use this when users need approvals, selections, and interactive Slack controls.
 ### Advanced Track (Multi-App + FastAPI)
 
 1. Split responsibilities into multiple agents/apps (`support`, `engineering`, `ops`, etc.).
-2. Route with `app_resolver` in `MultiAppBridge`.
+2. Route with `app_resolver` in `ChatBridge`.
 3. Add `interaction_handler` to run interactive callbacks before app routing.
 4. Use shared/persistent session services where needed.
-5. Expose health/status/webhook endpoints through `ChannelsFastAPIIntegration`.
+5. Expose health/status endpoints through `ChannelsFastAPIIntegration`.
 
 Use this for production setups with multiple agent domains and channel routing rules.
 
@@ -645,7 +642,7 @@ User -> Slack message/action
      -> (optional) interaction_handler (ToolActionRouter)
          -> side-effect + confirmation reply
          -> OR pass-through to bridge
-     -> ChatBridge / MultiAppBridge
+     -> ChatBridge
      -> ADK runner
      -> Tool call / tool result
      -> Slack adapter renders UI blocks

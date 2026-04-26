@@ -209,7 +209,7 @@ class TestBridge:
 
         assert len(seen_session_ids) == 2
         assert seen_session_ids[0] != seen_session_ids[1]
-        assert all(session_id.startswith("slack:C1") for session_id in seen_session_ids)
+        assert all(session_id.startswith("default:slack:C1") for session_id in seen_session_ids)
         bridge.stop()
 
     @pytest.mark.asyncio
@@ -258,7 +258,7 @@ class TestBridge:
 
         assert len(seen_session_ids) == 2
         assert seen_session_ids[0] != seen_session_ids[1]
-        assert all(session_id.startswith("slack:user:U123") for session_id in seen_session_ids)
+        assert all(session_id.startswith("default:slack:user:U123") for session_id in seen_session_ids)
         bridge.stop()
 
     @pytest.mark.asyncio

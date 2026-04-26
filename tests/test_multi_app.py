@@ -7,8 +7,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from adk_channels import ChatBridge
 from adk_channels.config import BridgeConfig
-from adk_channels.multi_app_bridge import MultiAppBridge
 from adk_channels.registry import ChannelRegistry
 from adk_channels.types import IncomingMessage
 
@@ -44,7 +44,7 @@ def registry(fake_adapter):
     return reg
 
 
-class TestMultiAppBridge:
+class TestMultiAppRouting:
     @pytest.mark.asyncio
     async def test_multi_app_routing(self, registry, fake_adapter):
         """Test that messages are routed to different apps."""
@@ -61,7 +61,7 @@ class TestMultiAppBridge:
         def resolver(msg):
             return "support" if "support" in msg.sender else "engineering"
 
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True, max_concurrent=2),
             registry=registry,
             app_resolver=resolver,
@@ -95,7 +95,7 @@ class TestMultiAppBridge:
             calls.append(("default", text))
             return "Default reply"
 
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
             registry=registry,
             agent_runners={"default": default_runner},
@@ -118,7 +118,7 @@ class TestMultiAppBridge:
             seen_session_ids.append(session)
             return "ok"
 
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True, session_mode="stateless"),
             registry=registry,
             agent_runners={"default": default_runner},
@@ -138,7 +138,7 @@ class TestMultiAppBridge:
 
     @pytest.mark.asyncio
     async def test_stats(self, registry):
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True),
             registry=registry,
         )
@@ -156,7 +156,7 @@ class TestMultiAppBridge:
             await asyncio.sleep(1)
             return "done"
 
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True, max_queue_per_sender=1, max_concurrent=1),
             registry=registry,
             agent_runners={"default": slow_runner},
@@ -189,7 +189,7 @@ class TestMultiAppBridge:
         def sync_runner(app, session, text):
             return f"Sync: {text}"
 
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
             registry=registry,
             agent_runners={"default": sync_runner},
@@ -217,7 +217,7 @@ class TestMultiAppBridge:
                 return "Handled interaction"
             return None
 
-        bridge = MultiAppBridge(
+        bridge = ChatBridge(
             bridge_config=BridgeConfig(enabled=True),
             registry=registry,
             agent_runners={"default": default_runner},

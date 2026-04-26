@@ -7,8 +7,8 @@ Architecture:
 -------------
 FastAPI App
 ├── / (ADK agent endpoints - if mounted)
-├── /channels/webhook/{adapter}  (Webhook receivers for external platforms)
 ├── /channels/health             (Channels healthcheck)
+├── /channels/status             (Channels status)
 └── Background tasks: Slack Socket Mode, Telegram polling
 
 Agents:
@@ -86,8 +86,7 @@ def main() -> None:
     import uvicorn
     from fastapi import FastAPI
 
-    from adk_channels import ChannelRegistry, ChannelsConfig
-    from adk_channels.multi_app_bridge import MultiAppBridge
+    from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge
     from adk_channels.server_integration import ChannelsFastAPIIntegration
 
     # Load config from env vars
@@ -117,7 +116,7 @@ def main() -> None:
     # Note: load_config requires async, so we do it in startup instead
 
     # Create bridge with multi-app routing
-    bridge = MultiAppBridge(
+    bridge = ChatBridge(
         bridge_config=config.bridge,
         registry=registry,
         app_resolver=app_resolver,
@@ -151,8 +150,8 @@ def main() -> None:
         return {"status": "ok", "service": "adk-multi-app-server"}
 
     logger.info("Starting server on http://0.0.0.0:8000")
-    logger.info("Channels webhook endpoint: http://0.0.0.0:8000/channels/webhook/{adapter}")
     logger.info("Channels health: http://0.0.0.0:8000/channels/health")
+    logger.info("Channels status: http://0.0.0.0:8000/channels/status")
 
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
 

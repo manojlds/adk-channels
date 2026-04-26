@@ -2,7 +2,7 @@
 
 This module provides utilities to integrate adk-channels with ADK's FastAPI
 deployment pattern, supporting multiple agent apps running alongside channel
-adapters (Slack, Telegram, Webhooks).
+adapters (Slack, Telegram, and outgoing webhooks).
 
 Typical ADK FastAPI Pattern:
 ---------------------------
@@ -10,7 +10,7 @@ ADK apps are often deployed as FastAPI servers where each agent is mounted
 as a sub-application or exposed via runner endpoints. This module lets you:
 
 1. Run channel adapters (Slack Socket Mode, Telegram polling) as background tasks
-2. Mount webhook receivers for HTTP-based channel adapters
+2. Expose channel health/status endpoints
 3. Route incoming messages to the correct ADK app/agent
 4. Share session services between ADK apps and the channel bridge
 
@@ -20,7 +20,7 @@ Example - Multi-app FastAPI server:
     from google.adk.agents import Agent
     from google.adk.sessions import InMemorySessionService
     from adk_channels import ChannelsConfig, ChannelRegistry
-    from adk_channels.multi_app_bridge import MultiAppBridge
+    from adk_channels.bridge import ChatBridge
     from adk_channels.server_integration import ChannelsFastAPIIntegration
 
     # Define your ADK agents
@@ -36,7 +36,7 @@ Example - Multi-app FastAPI server:
     await registry.load_config(config)
 
     # Bridge with multi-app routing
-    bridge = MultiAppBridge(
+    bridge = ChatBridge(
         bridge_config=config.bridge,
         registry=registry,
         app_resolver=lambda msg: "support" if msg.metadata.get("channel_id") == "SUPPORT_CHAN" else "engineering",
@@ -57,7 +57,7 @@ Example - Multi-app FastAPI server:
 
     # Now your FastAPI app serves:
     # - Your existing ADK endpoints (mount them as usual)
-    # - Channel webhook endpoints at /channels/* (if using webhook adapters)
+    # - Channel status endpoints at /channels/*
     # - Background tasks for Slack Socket Mode / Telegram polling
 """
 
@@ -85,7 +85,7 @@ class ChannelsFastAPIIntegration:
 
     Manages:
     - Background tasks for polling/Socket Mode adapters
-    - Webhook routes for HTTP-based adapters
+    - Health and status routes for channel integration
     - Lifecycle hooks (startup/shutdown)
     - Healthcheck endpoint
     """
@@ -238,7 +238,7 @@ def create_fastapi_app(
     except ImportError as err:
         raise ImportError("fastapi is required. Install: uv pip install adk-channels[webhook]") from err
 
-    from adk_channels.multi_app_bridge import MultiAppBridge
+    from adk_channels.bridge import ChatBridge
 
     cfg = config or ChannelsConfig()
     registry = ChannelRegistry()
@@ -253,7 +253,7 @@ def create_fastapi_app(
             # It's an instance, wrap in factory
             agent_factories[name] = lambda a=agent: a
 
-    bridge = MultiAppBridge(
+    bridge = ChatBridge(
         bridge_config=cfg.bridge,
         registry=registry,
         app_resolver=app_resolver,

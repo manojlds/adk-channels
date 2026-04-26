@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adk_channels.bridge import ChatBridge
+from adk_channels.bridge import AgentFactory, AgentRunner, AppResolver, ChatBridge
 from adk_channels.config import (
     AdapterConfig,
     BridgeConfig,
@@ -27,16 +27,13 @@ from adk_channels.types import (
     RunResult,
 )
 
-try:
-    from adk_channels.multi_app_bridge import MultiAppBridge
-except ImportError:
-    MultiAppBridge = None  # type: ignore
-
 __version__ = "0.1.0"
 __all__ = [
     "ChannelRegistry",
     "ChatBridge",
-    "MultiAppBridge",
+    "AgentFactory",
+    "AgentRunner",
+    "AppResolver",
     "ChannelsConfig",
     "AdapterConfig",
     "RouteConfig",

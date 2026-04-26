@@ -10,7 +10,8 @@ Architecture:
 FastAPI App
 ├── /agents/support/run          (ADK support agent endpoint)
 ├── /agents/engineering/run      (ADK engineering agent endpoint)
-├── /channels/webhook/{adapter}  (Channel webhook receivers)
+├── /channels/health             (Channels healthcheck)
+├── /channels/status             (Channels status)
 └── Background: Slack Socket Mode, Telegram polling
 
 The bridge uses HTTP clients to POST to the ADK endpoints, keeping the
@@ -99,8 +100,7 @@ def main() -> None:
     import uvicorn
     from fastapi import FastAPI
 
-    from adk_channels import ChannelRegistry, ChannelsConfig
-    from adk_channels.multi_app_bridge import MultiAppBridge
+    from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge
     from adk_channels.server_integration import ChannelsFastAPIIntegration
 
     config = ChannelsConfig()
@@ -133,7 +133,7 @@ def main() -> None:
 
     # Create registry and bridge
     registry = ChannelRegistry()
-    bridge = MultiAppBridge(
+    bridge = ChatBridge(
         bridge_config=config.bridge,
         registry=registry,
         app_resolver=app_resolver,
@@ -177,7 +177,8 @@ def main() -> None:
 
     logger.info("Starting server on http://0.0.0.0:8000")
     logger.info("ADK endpoints: POST /agents/{support,engineering}/run")
-    logger.info("Channels webhook: POST /channels/webhook/{adapter}")
+    logger.info("Channels health: GET /channels/health")
+    logger.info("Channels status: GET /channels/status")
 
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
 
