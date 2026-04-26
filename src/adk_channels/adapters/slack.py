@@ -122,6 +122,8 @@ class SlackAdapter(BaseChannelAdapter):
         if headers is None:
             return None
 
+        target = name.lower()
+
         for key in (name, name.lower(), name.upper()):
             value = headers.get(key) if hasattr(headers, "get") else None
             if value is None:
@@ -129,6 +131,14 @@ class SlackAdapter(BaseChannelAdapter):
             if isinstance(value, list | tuple):
                 value = ",".join(str(item) for item in value)
             return str(value)
+
+        if hasattr(headers, "items"):
+            for key, value in headers.items():
+                if str(key).lower() != target:
+                    continue
+                if isinstance(value, list | tuple):
+                    value = ",".join(str(item) for item in value)
+                return str(value)
         return None
 
     @classmethod
@@ -389,6 +399,8 @@ class SlackAdapter(BaseChannelAdapter):
         )
 
     async def _add_completed_reaction(self, metadata: dict[str, Any]) -> None:
+        """Add the configured completion reaction to the originating Slack message."""
+        # message_ts comes from block actions; timestamp comes from regular message events.
         await self._add_reaction(
             self._coerce_optional_str(metadata.get("channel_id")),
             self._coerce_optional_str(metadata.get("message_ts") or metadata.get("timestamp")),

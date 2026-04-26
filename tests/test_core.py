@@ -183,6 +183,45 @@ class TestBridge:
         bridge.stop()
 
     @pytest.mark.asyncio
+    async def test_bridge_filters_reply_metadata_to_adapter_keys(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            registry=registry,
+            agent_runner=lambda s, t: f"Echo: {t}",
+        )
+        bridge.start()
+
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C123:thread-1",
+                text="hello",
+                metadata={
+                    "app_name": "internal",
+                    "channel_id": "C123",
+                    "event_type": "message",
+                    "requires_existing_session": False,
+                    "thread_ts": "thread-1",
+                    "timestamp": "1746044941.000001",
+                    "unrelated": "value",
+                },
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        assert fake_adapter.sent_messages[0].metadata == {
+            "channel_id": "C123",
+            "thread_ts": "thread-1",
+            "timestamp": "1746044941.000001",
+        }
+        bridge.stop()
+
+    @pytest.mark.asyncio
     async def test_bridge_stateless_mode_uses_unique_session_ids(self, fake_adapter):
         registry = ChannelRegistry()
         registry.register("slack", fake_adapter)

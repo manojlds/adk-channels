@@ -30,6 +30,9 @@ from adk_channels.types import (
 logger = logging.getLogger("adk_channels.bridge")
 
 _id_counter = 0
+_REPLY_METADATA_KEYS_BY_ADAPTER = {
+    "slack": frozenset({"channel_id", "message_ts", "thread_ts", "timestamp"}),
+}
 
 
 def _next_id() -> str:
@@ -552,6 +555,17 @@ class ChatBridge:
     # Reply helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _build_reply_metadata(adapter: str, prompt_metadata: dict[str, Any] | None) -> dict[str, Any]:
+        if not prompt_metadata:
+            return {}
+
+        allowed_keys = _REPLY_METADATA_KEYS_BY_ADAPTER.get(adapter)
+        if allowed_keys is None:
+            return {}
+
+        return {key: value for key, value in prompt_metadata.items() if key in allowed_keys}
+
     async def _send_reply(
         self,
         adapter: str,
@@ -561,7 +575,7 @@ class ChatBridge:
         thoughts: list[str] | None = None,
         tool_interactions: list[dict[str, Any]] | None = None,
     ) -> None:
-        metadata: dict[str, Any] = dict(prompt_metadata) if prompt_metadata else {}
+        metadata = self._build_reply_metadata(adapter, prompt_metadata)
         if thoughts:
             metadata["thoughts"] = thoughts
         if tool_interactions:
