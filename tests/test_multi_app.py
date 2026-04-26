@@ -111,6 +111,33 @@ class TestMultiAppRouting:
         assert ("default", "hello") in calls
 
     @pytest.mark.asyncio
+    async def test_default_http_client_fallback(self, registry, fake_adapter):
+        """Test fallback to default http_client when resolver returns unknown app."""
+        calls = []
+
+        async def default_client(session, text):
+            calls.append((session, text))
+            return "HTTP default"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            registry=registry,
+            app_resolver=lambda _msg: "unknown-app",
+            http_clients={"default": default_client},
+        )
+        bridge.start()
+
+        msg = IncomingMessage(adapter="slack", sender="U123", text="hello")
+        await bridge.handle_message(msg)
+        await asyncio.sleep(0.1)
+
+        bridge.stop()
+
+        assert len(calls) == 1
+        assert calls[0][1] == "hello"
+        assert any("HTTP default" in (m.text or "") for m in fake_adapter.sent_messages)
+
+    @pytest.mark.asyncio
     async def test_stateless_session_mode_uses_unique_session_ids(self, registry):
         seen_session_ids = []
 
