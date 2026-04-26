@@ -7,7 +7,7 @@ description: Multi-channel messaging integration for Google ADK — Slack, Teleg
 
 `adk-channels` is a Python library that connects Google ADK agents to external messaging platforms.
 Incoming messages are routed through a chat bridge to ADK agents; responses are sent back
-automatically. Supports single-agent and multi-app FastAPI deployments.
+automatically. Supports both single-agent and multi-app FastAPI deployments through one bridge.
 
 ## Directory Layout
 
@@ -16,8 +16,7 @@ src/adk_channels/
 ├── types.py              # Shared dataclasses
 ├── config.py             # Pydantic-settings config (env vars + JSON)
 ├── registry.py           # Adapter registry and route resolution
-├── bridge.py             # Single-app chat bridge
-├── multi_app_bridge.py   # Multi-app routing bridge
+├── bridge.py             # Unified bridge (single-agent + multi-app routing)
 ├── server_integration.py # FastAPI integration utilities
 ├── server.py             # Standalone webhook server (optional)
 └── adapters/
@@ -77,19 +76,15 @@ Custom adapters can be registered at runtime with `registry.register(name, adapt
 
 ## Bridge Patterns
 
-### Single App (`ChatBridge`)
-One agent handles all incoming messages. Use for simple bots.
+### Unified (`ChatBridge`)
+Use one bridge for both patterns:
 
 ```python
+# Single-agent
 bridge = ChatBridge(config.bridge, registry, agent_factory=lambda: my_agent)
-```
 
-### Multi App (`MultiAppBridge`)
-Routes messages to different agents based on a resolver function.
-Use for FastAPI deployments with multiple agent endpoints.
-
-```python
-bridge = MultiAppBridge(
+# Multi-app routing
+bridge = ChatBridge(
     config.bridge,
     registry,
     app_resolver=lambda msg: "support" if "support" in msg.sender else "default",

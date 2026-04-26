@@ -101,7 +101,6 @@ def main() -> None:
     logger.info("Model:     %s", model)
     logger.info("Health:    http://0.0.0.0:8000/channels/health")
     logger.info("Status:    http://0.0.0.0:8000/channels/status")
-    logger.info("Webhooks:  http://0.0.0.0:8000/channels/webhook/{adapter}")
     logger.info("=" * 60)
     logger.info("In Slack: DM the bot, @mention it, or use /adk <msg>")
     logger.info("Try tool flows:")

@@ -132,7 +132,6 @@ ADK Slack Agent Server
 ============================================================
 Health:    http://0.0.0.0:8000/channels/health
 Status:    http://0.0.0.0:8000/channels/status
-Webhooks:  http://0.0.0.0:8000/channels/webhook/{adapter}
 ============================================================
 In Slack: DM the bot, @mention it, or use /adk <msg>
 ============================================================
@@ -193,5 +192,5 @@ If you configured `/adk` as the slash command:
 
 - **Restrict channels**: Set `ADK_CHANNELS_ADAPTERS__SLACK__ALLOWED_CHANNEL_IDS='["C1234567890"]'`
 - **Mentions only**: Set `ADK_CHANNELS_ADAPTERS__SLACK__RESPOND_TO_MENTIONS_ONLY=true`
-- **Multi-app routing**: Use `MultiAppBridge` to route different channels to different agents
+- **Multi-app routing**: Use `ChatBridge` with `app_resolver` to route channels to different agents
 - **Custom runner**: Replace `agent_factory` with `agent_runner` for custom logic

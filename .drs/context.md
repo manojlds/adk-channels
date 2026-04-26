@@ -11,8 +11,7 @@ multi-app deployments via FastAPI.
 - `src/adk_channels/config.py`: Pydantic-settings configuration with env var support
 - `src/adk_channels/registry.py`: Adapter registry and route resolution
 - `src/adk_channels/adapters/`: Built-in adapters — Slack (Bolt + Socket Mode), Telegram (python-telegram-bot), Webhook (HTTP POST)
-- `src/adk_channels/bridge.py`: Single-app chat bridge connecting channels to one ADK agent
-- `src/adk_channels/multi_app_bridge.py`: Multi-app bridge routing messages to different agents/apps
+- `src/adk_channels/bridge.py`: Unified chat bridge for single-agent and multi-app routing
 - `src/adk_channels/server_integration.py`: FastAPI integration for multi-app deployments
 - `tests/`: Unit and integration tests for core, adapters, bridges, and server integration
 

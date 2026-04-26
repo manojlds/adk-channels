@@ -271,9 +271,8 @@ from fastapi import FastAPI
 from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
 
-from adk_channels import ChannelRegistry, ChannelsConfig, ToolActionRouter
+from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge, ToolActionRouter
 from adk_channels.config import AdapterConfig
-from adk_channels.multi_app_bridge import MultiAppBridge
 from adk_channels.server_integration import ChannelsFastAPIIntegration
 
 
@@ -339,7 +338,7 @@ def main() -> None:
     config.bridge.enabled = True
 
     registry = ChannelRegistry()
-    bridge = MultiAppBridge(
+    bridge = ChatBridge(
         bridge_config=config.bridge,
         registry=registry,
         app_resolver=app_resolver,
