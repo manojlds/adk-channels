@@ -340,15 +340,25 @@ Example `channels.json`:
 | `reply_in_thread_by_default` | `boolean` | For top-level channel @mentions, reply in a new thread and use that thread as sender/session key (default: `true`) |
 | `continue_threads_without_mention` | `boolean` | Continue bot-started channel threads when users reply without @mentioning the bot (default: `true`) |
 | `slash_command` | `string` | Slash command to register (default: `/adk`) |
+| `processing_reaction` | `string` | Optional reaction name to add when a Slack message is accepted for processing; requires `reactions:write` |
+| `completed_reaction` | `string` | Optional reaction name to add after a reply is sent; requires `reactions:write` |
+
+**Startup checks:**
+- The Slack adapter calls `auth.test` at startup and reads the `x-oauth-scopes` response header.
+- Startup fails if the bot token cannot be authenticated or is missing the minimum bot scopes: `chat:write`, `app_mentions:read`.
+- Optional capabilities are detected from granted scopes and exposed in adapter status: DMs (`im:history`), public channel message events (`channels:history`), private channel message events (`groups:history`), MPIM events (`mpim:history`), slash commands (`commands`), reactions (`reactions:write`), file downloads (`files:read`), file uploads (`files:write`), and user lookup (`users:read`).
+- Socket Mode still requires an App-Level Token (`xapp-...`) with `connections:write`; Slack validates that when the Socket Mode connection is opened.
+- Scope checks do not prove Event Subscriptions or channel membership are configured; Slack only delivers events the app has subscribed to and conversations the bot can access.
 
 **Features:**
-- Responds to DMs automatically
+- Responds to DMs automatically when `im:history` is granted and `message.im` is subscribed
 - Responds to @mentions in channels (if `respond_to_mentions_only` is false, responds to all messages in allowed channels)
 - Supports slash commands with instant acknowledgment
 - Thread-aware: top-level channel @mentions start a thread by default; replies in bot-started threads continue without repeated @mentions when channel message events are subscribed; top-level DMs stay in the DM conversation
 - Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
 - Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)
+- Optional processing/completed reactions when `reactions:write` is available
 
 **Interactive tool prompts:**
 

@@ -207,13 +207,17 @@ class ChannelRegistry:
         """List all registered adapters and route aliases."""
         result: list[dict[str, Any]] = []
         for name, adapter in self._adapters.items():
-            result.append(
-                {
-                    "name": name,
-                    "type": "adapter",
-                    "direction": adapter.direction.value,
-                }
-            )
+            adapter_info: dict[str, Any] = {
+                "name": name,
+                "type": "adapter",
+                "direction": adapter.direction.value,
+            }
+            status_getter = getattr(adapter, "get_status", None)
+            if callable(status_getter):
+                status = status_getter()
+                if isinstance(status, dict):
+                    adapter_info["status"] = status
+            result.append(adapter_info)
         for alias, (adapter_name, recipient) in self._routes.items():
             result.append(
                 {

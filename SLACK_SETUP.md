@@ -66,6 +66,14 @@ Recommended:
 - `groups:history` — Read private channels
 - `mpim:history` — Read multi-party DMs
 
+Optional:
+- `reactions:write` — Add processing/completed reactions when configured
+- `files:read` — Download Slack file attachments for multimodal agents
+- `files:write` — Upload generated files or images back to Slack
+- `users:read` — Resolve Slack user display names
+
+At startup, the Slack adapter authenticates the bot token and fails fast if the required bot scopes are missing. Optional scopes are detected and reported as adapter capabilities; features that need missing optional scopes are disabled or unavailable. Scope checks do not verify Event Subscriptions or whether the bot has been invited to a channel.
+
 After adding scopes, **reinstall the app** to your workspace.
 
 ### Event Subscriptions

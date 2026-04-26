@@ -231,6 +231,7 @@ class ChatBridge:
                 message.adapter,
                 message.sender,
                 f"Queue full ({self._config.max_queue_per_sender} pending). Wait for current prompts to finish.",
+                prompt_metadata=message.metadata,
             )
             return
 
@@ -311,12 +312,18 @@ class ChatBridge:
                     prompt.adapter,
                     prompt.sender,
                     result.response,
+                    prompt_metadata=prompt.metadata,
                     thoughts=result.thoughts,
                     tool_interactions=result.tool_interactions,
                 )
             else:
                 error_msg = result.error or "Something went wrong. Please try again."
-                await self._send_reply(prompt.adapter, prompt.sender, f"Error: {error_msg}")
+                await self._send_reply(
+                    prompt.adapter,
+                    prompt.sender,
+                    f"Error: {error_msg}",
+                    prompt_metadata=prompt.metadata,
+                )
 
             logger.info(
                 "Completed message %s for app '%s' in %.0fms (ok=%s)",
@@ -337,11 +344,17 @@ class ChatBridge:
                 prompt.adapter,
                 prompt.sender,
                 "Error: Request timed out. Please try again with a shorter prompt.",
+                prompt_metadata=prompt.metadata,
             )
 
         except Exception as exc:
             logger.exception("Error processing message %s", prompt.id)
-            await self._send_reply(prompt.adapter, prompt.sender, f"Unexpected error: {exc}")
+            await self._send_reply(
+                prompt.adapter,
+                prompt.sender,
+                f"Unexpected error: {exc}",
+                prompt_metadata=prompt.metadata,
+            )
         finally:
             session.processing = False
             self._active_count -= 1
@@ -544,10 +557,11 @@ class ChatBridge:
         adapter: str,
         recipient: str,
         text: str,
+        prompt_metadata: dict[str, Any] | None = None,
         thoughts: list[str] | None = None,
         tool_interactions: list[dict[str, Any]] | None = None,
     ) -> None:
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = dict(prompt_metadata) if prompt_metadata else {}
         if thoughts:
             metadata["thoughts"] = thoughts
         if tool_interactions:
