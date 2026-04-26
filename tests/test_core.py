@@ -7,7 +7,7 @@ import asyncio
 import pytest
 
 from adk_channels.adapters.base import BaseChannelAdapter
-from adk_channels.config import AdapterConfig, BridgeConfig, ChannelsConfig, RouteConfig
+from adk_channels.config import AdapterConfig, BridgeConfig, ChannelsConfig, RouteConfig, SessionRule
 from adk_channels.registry import ChannelRegistry
 from adk_channels.types import (
     AdapterDirection,
@@ -69,6 +69,7 @@ class TestConfig:
         cfg = BridgeConfig()
         assert cfg.enabled is False
         assert cfg.session_mode == "persistent"
+        assert cfg.session_scope == "sender"
         assert cfg.max_concurrent == 2
 
     def test_channels_config_from_env(self, monkeypatch):
@@ -179,6 +180,179 @@ class TestBridge:
         assert len(fake_adapter.sent_messages) == 1
         assert "Echo: hello" in fake_adapter.sent_messages[0].text
 
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_stateless_mode_uses_unique_session_ids(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        seen_session_ids: list[str] = []
+
+        async def capture_runner(session_id: str, text: str) -> str:
+            seen_session_ids.append(session_id)
+            return f"Echo: {text}"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True, session_mode="stateless"),
+            registry=registry,
+            agent_runner=capture_runner,
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="C1", text="hello"))
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="C1", text="again"))
+
+        assert len(seen_session_ids) == 2
+        assert seen_session_ids[0] != seen_session_ids[1]
+        assert all(session_id.startswith("slack:C1") for session_id in seen_session_ids)
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_user_scope_and_rules(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        seen_session_ids: list[str] = []
+
+        async def capture_runner(session_id: str, text: str) -> str:
+            seen_session_ids.append(session_id)
+            return f"Echo: {text}"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(
+                enabled=True,
+                session_mode="persistent",
+                session_scope="user",
+                session_rules=[SessionRule(pattern="slack:user:U*", mode="stateless")],
+            ),
+            registry=registry,
+            agent_runner=capture_runner,
+        )
+        bridge.start()
+
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C1:thread-1",
+                text="first",
+                metadata={"user_id": "U123", "channel_id": "C1", "thread_ts": "thread-1"},
+            )
+        )
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C1:thread-2",
+                text="second",
+                metadata={"user_id": "U123", "channel_id": "C1", "thread_ts": "thread-2"},
+            )
+        )
+
+        assert len(seen_session_ids) == 2
+        assert seen_session_ids[0] != seen_session_ids[1]
+        assert all(session_id.startswith("slack:user:U123") for session_id in seen_session_ids)
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_timeout(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        async def slow_runner(session_id: str, text: str) -> str:
+            await asyncio.sleep(0.05)
+            return f"Echo: {text}"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True, timeout_ms=10),
+            registry=registry,
+            agent_runner=slow_runner,
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+
+        assert any("timed out" in (msg.text or "").lower() for msg in fake_adapter.sent_messages)
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_interaction_handler_short_circuits_agent(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        runner_called = False
+
+        async def runner(session_id: str, text: str) -> str:
+            nonlocal runner_called
+            runner_called = True
+            return f"Echo: {text}"
+
+        async def interaction_handler(message: IncomingMessage):
+            if message.metadata.get("event_type") == "block_action":
+                return "Action handled"
+            return None
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_runner=runner,
+            interaction_handler=interaction_handler,
+        )
+        bridge.start()
+
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="C123:thread-1",
+                text="action:adk.tool.approval.approve",
+                metadata={
+                    "event_type": "block_action",
+                    "tool_name": "approval",
+                    "tool_action": "approve",
+                    "action_value": '{"request_id":"req-1"}',
+                },
+            )
+        )
+
+        assert runner_called is False
+        assert any(msg.text == "Action handled" for msg in fake_adapter.sent_messages)
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_interaction_handler_unhandled_falls_back_to_agent(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        async def interaction_handler(message: IncomingMessage):
+            return False
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_runner=lambda session, text: f"Echo: {text}",
+            interaction_handler=interaction_handler,
+        )
+        bridge.start()
+
+        await bridge.handle_message(
+            IncomingMessage(
+                adapter="slack",
+                sender="U123",
+                text="hello",
+            )
+        )
+        await asyncio.sleep(0.1)
+
+        assert any("Echo: hello" in (msg.text or "") for msg in fake_adapter.sent_messages)
         bridge.stop()
 
     def test_bridge_stats(self):

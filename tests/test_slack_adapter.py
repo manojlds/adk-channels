@@ -1,0 +1,253 @@
+"""Slack adapter unit tests that don't require Slack SDK network calls."""
+
+from __future__ import annotations
+
+from adk_channels.adapters.slack import SlackAdapter
+from adk_channels.config import AdapterConfig
+from adk_channels.types import ChannelMessage
+
+
+def _make_adapter() -> SlackAdapter:
+    return SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+        )
+    )
+
+
+def _make_allowlisted_adapter(channel_ids: list[str]) -> SlackAdapter:
+    return SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            allowed_channel_ids=channel_ids,
+        )
+    )
+
+
+def test_resolve_destination_uses_recipient_thread_suffix() -> None:
+    adapter = _make_adapter()
+    channel, thread_ts = adapter._resolve_destination(
+        ChannelMessage(adapter="slack", recipient="C123:1746044940.000100", text="hello")
+    )
+    assert channel == "C123"
+    assert thread_ts == "1746044940.000100"
+
+
+def test_resolve_destination_prefers_metadata_thread() -> None:
+    adapter = _make_adapter()
+    channel, thread_ts = adapter._resolve_destination(
+        ChannelMessage(
+            adapter="slack",
+            recipient="C123:ignored",
+            text="hello",
+            metadata={"thread_ts": "1746044940.999999"},
+        )
+    )
+    assert channel == "C123"
+    assert thread_ts == "1746044940.999999"
+
+
+def test_build_tool_blocks_formats_interactions() -> None:
+    adapter = _make_adapter()
+    blocks = adapter._build_tool_blocks(
+        [
+            {"type": "tool_call", "name": "search_docs", "payload": '{"query":"sessions"}'},
+            {"type": "tool_result", "name": "search_docs", "payload": "Found 3 documents"},
+        ]
+    )
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "section"
+    assert "Tool call" in blocks[0]["text"]["text"]
+    assert "Tool result" in blocks[1]["text"]["text"]
+
+
+def test_translate_block_action_maps_to_incoming_message() -> None:
+    adapter = _make_adapter()
+    incoming = adapter._translate_block_action(
+        {
+            "type": "block_actions",
+            "channel": {"id": "C123", "name": "ops"},
+            "user": {"id": "U123", "username": "alice"},
+            "message": {"ts": "1746044940.123400", "text": "Run tool?"},
+            "actions": [
+                {
+                    "action_id": "tool.run",
+                    "type": "button",
+                    "block_id": "tool_actions",
+                    "value": "run_now",
+                    "action_ts": "1746044941.000001",
+                }
+            ],
+            "response_url": "https://hooks.slack.com/actions/123",
+            "trigger_id": "1337.7331",
+        }
+    )
+
+    assert incoming is not None
+    assert incoming.adapter == "slack"
+    assert incoming.sender == "C123:1746044940.123400"
+    assert incoming.text == "action:tool.run value:run_now"
+    assert incoming.metadata["event_type"] == "block_action"
+    assert incoming.metadata["thread_ts"] == "1746044940.123400"
+
+
+def test_translate_block_action_uses_select_values() -> None:
+    adapter = _make_adapter()
+    incoming = adapter._translate_block_action(
+        {
+            "type": "block_actions",
+            "channel": {"id": "C123"},
+            "user": {"id": "U123"},
+            "message": {"ts": "1746044940.123400", "thread_ts": "1746044900.000001"},
+            "actions": [
+                {
+                    "action_id": "tool.pick",
+                    "type": "static_select",
+                    "selected_option": {
+                        "value": "lookup_logs",
+                        "text": {"type": "plain_text", "text": "Lookup logs"},
+                    },
+                }
+            ],
+        }
+    )
+
+    assert incoming is not None
+    assert incoming.sender == "C123:1746044900.000001"
+    assert incoming.text == "action:tool.pick value:lookup_logs"
+
+
+def test_translate_block_action_respects_channel_allowlist() -> None:
+    adapter = _make_allowlisted_adapter(["C999"])
+    incoming = adapter._translate_block_action(
+        {
+            "type": "block_actions",
+            "channel": {"id": "C123"},
+            "user": {"id": "U123"},
+            "message": {"ts": "1746044940.123400"},
+            "actions": [{"action_id": "tool.run", "type": "button", "value": "run_now"}],
+        }
+    )
+
+    assert incoming is None
+
+
+def test_translate_block_action_parses_tool_action_convention() -> None:
+    adapter = _make_adapter()
+    incoming = adapter._translate_block_action(
+        {
+            "type": "block_actions",
+            "channel": {"id": "C123"},
+            "user": {"id": "U123"},
+            "message": {"ts": "1746044940.123400"},
+            "actions": [
+                {
+                    "action_id": "adk.tool.logs.open",
+                    "type": "button",
+                    "value": "latest",
+                }
+            ],
+        }
+    )
+
+    assert incoming is not None
+    assert incoming.metadata["tool_name"] == "logs"
+    assert incoming.metadata["tool_action"] == "open"
+
+
+def test_build_outbound_blocks_merges_custom_actions_and_tool_blocks() -> None:
+    adapter = _make_adapter()
+    blocks = adapter._build_outbound_blocks(
+        {
+            "slack_blocks": [{"type": "divider"}],
+            "slack_actions_text": "Choose next action",
+            "slack_actions": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Run"},
+                    "action_id": "adk.tool.ci.run",
+                    "value": "quick",
+                }
+            ],
+        },
+        [{"type": "tool_call", "name": "ci", "payload": '{"suite":"quick"}'}],
+    )
+
+    assert len(blocks) == 4
+    assert blocks[0]["type"] == "divider"
+    assert blocks[1]["type"] == "section"
+    assert blocks[1]["text"]["text"] == "Choose next action"
+    assert blocks[2]["type"] == "actions"
+    assert blocks[3]["type"] == "section"
+
+
+def test_build_outbound_blocks_uses_structured_tool_payload() -> None:
+    adapter = _make_adapter()
+    blocks = adapter._build_outbound_blocks(
+        {},
+        [
+            {
+                "type": "tool_result",
+                "name": "request_delete_file",
+                "payload": '{"status":"pending_approval"}',
+                "raw_payload": {
+                    "message": "Approval requested.",
+                    "slack_actions_text": "Approve delete?",
+                    "slack_actions": [
+                        {
+                            "type": "button",
+                            "text": {"type": "plain_text", "text": "Approve"},
+                            "action_id": "adk.tool.approval.approve",
+                            "value": '{"request_id":"req-1"}',
+                        }
+                    ],
+                },
+            }
+        ],
+    )
+
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "section"
+    assert blocks[0]["text"]["text"] == "Approve delete?"
+    assert blocks[1]["type"] == "actions"
+
+
+def test_build_outbound_blocks_supports_nested_slack_payload() -> None:
+    adapter = _make_adapter()
+    blocks = adapter._build_outbound_blocks(
+        {},
+        [
+            {
+                "type": "tool_result",
+                "name": "request_file_options",
+                "raw_payload": {
+                    "message": "Waiting for selection",
+                    "slack": {
+                        "actions_text": "Choose files",
+                        "actions": [
+                            {
+                                "type": "multi_static_select",
+                                "action_id": "adk.tool.options.choose",
+                                "placeholder": {"type": "plain_text", "text": "Select files"},
+                                "options": [
+                                    {
+                                        "text": {"type": "plain_text", "text": "a.txt"},
+                                        "value": "a.txt",
+                                    }
+                                ],
+                            }
+                        ],
+                    },
+                },
+            }
+        ],
+    )
+
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "section"
+    assert blocks[0]["text"]["text"] == "Choose files"
+    assert blocks[1]["type"] == "actions"

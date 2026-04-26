@@ -235,6 +235,7 @@ def create_fastapi_app(
     config: ChannelsConfig | None = None,
     app_resolver: Any | None = None,
     session_service_factory: Any | None = None,
+    interaction_handler: Any | None = None,
     webhook_prefix: str = "/channels",
 ) -> FastAPI:
     """Create a complete FastAPI app with ADK channels integration.
@@ -248,6 +249,8 @@ def create_fastapi_app(
         app_resolver: Callable to resolve IncomingMessage -> app_name.
                       Defaults to always "default".
         session_service_factory: Optional shared SessionService factory.
+        interaction_handler: Optional callable to handle interactive messages
+                             before agent execution (for example ToolActionRouter).
         webhook_prefix: Route prefix for channel webhooks.
 
     Returns:
@@ -288,6 +291,7 @@ def create_fastapi_app(
         app_resolver=app_resolver,
         agent_factories=agent_factories,
         session_service_factory=session_service_factory,
+        interaction_handler=interaction_handler,
     )
 
     app = _FastAPI(title="ADK Channels Server")

@@ -78,6 +78,7 @@ class SenderSession:
     abort_controller: Any | None = None
     message_count: int = 0
     started_at: float = 0.0
+    last_activity_at: float = 0.0
 
 
 @dataclass
@@ -87,6 +88,7 @@ class RunResult:
     ok: bool
     response: str
     thoughts: list[str] = field(default_factory=list)
+    tool_interactions: list[dict[str, Any]] = field(default_factory=list)
     error: str | None = None
     duration_ms: float = 0.0
     exit_code: int = 0

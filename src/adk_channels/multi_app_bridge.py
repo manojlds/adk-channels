@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import fnmatch
 import logging
 import time
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from typing import Any
 
+from adk_channels.adk_events import collect_part_outputs, fallback_response_from_tool_interactions
 from adk_channels.config import BridgeConfig
+from adk_channels.interactions import InteractionHandler, normalize_interaction_result
 from adk_channels.registry import ChannelRegistry
 from adk_channels.types import (
     ChannelMessage,
@@ -62,6 +66,7 @@ class MultiAppBridge:
         agent_runners: dict[str, AgentRunner] | None = None,
         http_clients: dict[str, Callable[[str, str], Awaitable[str]]] | None = None,
         session_service_factory: Callable[[], Any] | None = None,
+        interaction_handler: InteractionHandler | None = None,
     ) -> None:
         """Initialize the multi-app bridge.
 
@@ -76,8 +81,11 @@ class MultiAppBridge:
             http_clients: Dict of app_name -> async callable(session_id, text) that calls
                           an ADK FastAPI endpoint internally.
             session_service_factory: Optional callable that returns a shared SessionService
-                                     (e.g., InMemorySessionService or persistent store).
-                                     If not provided, each message gets a fresh session.
+                                      (e.g., InMemorySessionService or persistent store).
+                                     If not provided, an in-memory shared service is used
+                                     when running with agent_factories.
+            interaction_handler: Optional callable to handle interactive messages
+                                 before app routing and agent execution.
         """
         self._config = bridge_config or BridgeConfig()
         self._registry = registry
@@ -86,6 +94,7 @@ class MultiAppBridge:
         self._agent_runners = agent_runners or {}
         self._http_clients = http_clients or {}
         self._session_service_factory = session_service_factory
+        self._interaction_handler = interaction_handler
 
         # Per-app, per-sender sessions
         # Structure: {app_name: {sender_key: SenderSession}}
@@ -102,6 +111,10 @@ class MultiAppBridge:
         self._running = True
         if self._session_service_factory:
             self._shared_session_service = self._session_service_factory()
+        elif self._agent_factories:
+            from google.adk.sessions import InMemorySessionService
+
+            self._shared_session_service = InMemorySessionService()  # type: ignore[no-untyped-call]
         logger.info(
             "Multi-app bridge started with apps: %s",
             list(self._agent_factories.keys()) or list(self._agent_runners.keys()) or list(self._http_clients.keys()),
@@ -126,9 +139,15 @@ class MultiAppBridge:
         if not self._running:
             return
 
+        if await self._dispatch_interaction(message):
+            return
+
         text = (message.text or "").strip()
         if not text:
             return
+
+        now = time.time()
+        self._prune_idle_sessions(now)
 
         # Resolve app
         app_name_raw = self._app_resolver(message)
@@ -138,7 +157,7 @@ class MultiAppBridge:
             app_name = app_name_raw
         app_name = str(app_name)
 
-        sender_key = f"{message.adapter}:{message.sender}"
+        sender_key = self._resolve_sender_key(message)
 
         # Get or create app + session
         app_sessions = self._sessions.setdefault(app_name, {})
@@ -146,6 +165,13 @@ class MultiAppBridge:
         if not session:
             session = self._create_session(message)
             app_sessions[sender_key] = session
+            logger.info(
+                "Created multi-app session app=%s key=%s (mode=%s scope=%s)",
+                app_name,
+                sender_key,
+                self._resolve_session_mode(app_name, sender_key),
+                self._config.session_scope,
+            )
 
         # Check queue depth
         if len(session.queue) >= self._config.max_queue_per_sender:
@@ -168,6 +194,7 @@ class MultiAppBridge:
         )
         session.queue.append(queued)
         session.message_count += 1
+        session.last_activity_at = now
 
         logger.info(
             "Enqueued message %s for app '%s' from %s (queue depth: %d)",
@@ -196,18 +223,31 @@ class MultiAppBridge:
         # Typing indicator
         adapter = self._registry.get_adapter(prompt.adapter)
         if adapter and self._config.typing_indicators:
-            with __import__("contextlib").suppress(Exception):
+            with suppress(Exception):
                 await adapter.send_typing(prompt.sender)
 
         logger.info("Processing message %s for app '%s' from %s", prompt.id, app_name, sender_key)
         start_time = time.time()
 
         try:
-            result = await self._run_agent_prompt(app_name, prompt, sender_key)
+            timeout_seconds = self._config.timeout_ms / 1000 if self._config.timeout_ms > 0 else None
+            if timeout_seconds is None:
+                result = await self._run_agent_prompt(app_name, prompt, sender_key)
+            else:
+                result = await asyncio.wait_for(
+                    self._run_agent_prompt(app_name, prompt, sender_key),
+                    timeout=timeout_seconds,
+                )
             duration_ms = (time.time() - start_time) * 1000
 
             if result.ok:
-                await self._send_reply(prompt.adapter, prompt.sender, result.response)
+                await self._send_reply(
+                    prompt.adapter,
+                    prompt.sender,
+                    result.response,
+                    thoughts=result.thoughts,
+                    tool_interactions=result.tool_interactions,
+                )
             else:
                 error_msg = result.error or "Something went wrong. Please try again."
                 await self._send_reply(prompt.adapter, prompt.sender, f"Error: {error_msg}")
@@ -220,48 +260,105 @@ class MultiAppBridge:
                 result.ok,
             )
 
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Message %s for app '%s' timed out after %dms",
+                prompt.id,
+                app_name,
+                self._config.timeout_ms,
+            )
+            await self._send_reply(
+                prompt.adapter,
+                prompt.sender,
+                "Error: Request timed out. Please try again with a shorter prompt.",
+            )
+
         except Exception as exc:
             logger.exception("Error processing message %s", prompt.id)
             await self._send_reply(prompt.adapter, prompt.sender, f"Unexpected error: {exc}")
         finally:
             session.processing = False
             self._active_count -= 1
+            session.last_activity_at = time.time()
 
             if session.queue:
                 await self._process_next(app_name, sender_key)
             await self._drain_waiting()
 
+    async def _dispatch_interaction(self, message: IncomingMessage) -> bool:
+        handler = self._interaction_handler
+        if handler is None:
+            return False
+
+        try:
+            raw_result = handler(message)
+            if asyncio.iscoroutine(raw_result):
+                result = await raw_result
+            else:
+                result = raw_result
+
+            normalized = normalize_interaction_result(message, result)
+            if normalized is None or not normalized.handled:
+                return False
+
+            for reply in normalized.replies:
+                send_result = await self._registry.send(reply)
+                if not send_result.get("ok"):
+                    logger.error("Failed to send interaction reply: %s", send_result.get("error"))
+
+            return True
+        except Exception:
+            logger.exception("Interaction handler failed")
+            return False
+
     async def _run_agent_prompt(self, app_name: str, prompt: QueuedPrompt, sender_key: str) -> RunResult:
         """Run the agent prompt for a specific app."""
+        session_mode = self._resolve_session_mode(app_name, sender_key)
+        run_session_id = self._build_run_session_id(app_name, sender_key, prompt.id, session_mode)
+
         try:
             # Priority: custom runner > HTTP client > agent factory > error
             if app_name in self._agent_runners:
                 runner = self._agent_runners[app_name]
                 if asyncio.iscoroutinefunction(runner):
-                    response = await runner(app_name, sender_key, prompt.text)
+                    response = await runner(app_name, run_session_id, prompt.text)
                 else:
-                    response = runner(app_name, sender_key, prompt.text)
+                    response = runner(app_name, run_session_id, prompt.text)
                 return RunResult(ok=True, response=str(response))
 
             if app_name in self._http_clients:
                 client = self._http_clients[app_name]
-                response = await client(sender_key, prompt.text)
+                response = await client(run_session_id, prompt.text)
                 return RunResult(ok=True, response=str(response))
 
             if app_name in self._agent_factories:
-                return await self._run_with_adk_runner(app_name, prompt, sender_key)
+                return await self._run_with_adk_runner(app_name, prompt, sender_key, run_session_id)
 
             # Fallback to default if no specific app configured
             if "default" in self._agent_runners:
+                default_session_mode = self._resolve_session_mode("default", sender_key)
+                default_run_session_id = self._build_run_session_id(
+                    "default",
+                    sender_key,
+                    prompt.id,
+                    default_session_mode,
+                )
                 runner = self._agent_runners["default"]
                 if asyncio.iscoroutinefunction(runner):
-                    response = await runner("default", sender_key, prompt.text)
+                    response = await runner("default", default_run_session_id, prompt.text)
                 else:
-                    response = runner("default", sender_key, prompt.text)
+                    response = runner("default", default_run_session_id, prompt.text)
                 return RunResult(ok=True, response=str(response))
 
             if "default" in self._agent_factories:
-                return await self._run_with_adk_runner("default", prompt, sender_key)
+                default_session_mode = self._resolve_session_mode("default", sender_key)
+                default_run_session_id = self._build_run_session_id(
+                    "default",
+                    sender_key,
+                    prompt.id,
+                    default_session_mode,
+                )
+                return await self._run_with_adk_runner("default", prompt, sender_key, default_run_session_id)
 
             return RunResult(
                 ok=False,
@@ -272,7 +369,13 @@ class MultiAppBridge:
             logger.exception("Agent execution failed for app '%s'", app_name)
             return RunResult(ok=False, response="", error=str(exc))
 
-    async def _run_with_adk_runner(self, app_name: str, prompt: QueuedPrompt, sender_key: str) -> RunResult:
+    async def _run_with_adk_runner(
+        self,
+        app_name: str,
+        prompt: QueuedPrompt,
+        sender_key: str,
+        run_session_id: str,
+    ) -> RunResult:
         """Run using ADK's Runner pattern with optional shared session service."""
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
@@ -287,23 +390,62 @@ class MultiAppBridge:
         session_service = self._shared_session_service or InMemorySessionService()  # type: ignore[no-untyped-call]
 
         runner = Runner(agent=agent, app_name=app_name, session_service=session_service)
+
+        session = await session_service.get_session(
+            app_name=app_name,
+            user_id=sender_key,
+            session_id=run_session_id,
+        )
+        if session is None:
+            await session_service.create_session(
+                app_name=app_name,
+                user_id=sender_key,
+                session_id=run_session_id,
+            )
+
         message = Content(role="user", parts=[Part(text=prompt.text)])
 
-        responses = []
+        thoughts: list[str] = []
+        responses: list[str] = []
+        tool_interactions: list[dict[str, Any]] = []
         async for event in runner.run_async(
             user_id=sender_key,
-            session_id=f"{app_name}:{sender_key}",
+            session_id=run_session_id,
             new_message=message,
         ):
             if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        responses.append(part.text)
+                part_thoughts, part_responses, part_tools = collect_part_outputs(event.content.parts)
+                thoughts.extend(part_thoughts)
+                responses.extend(part_responses)
+                tool_interactions.extend(part_tools)
 
-        return RunResult(ok=True, response="\n".join(responses) or "(no response)")
+        response_text = "\n".join(responses).strip()
+        if not response_text:
+            response_text = fallback_response_from_tool_interactions(tool_interactions) or "(no response)"
 
-    async def _send_reply(self, adapter: str, recipient: str, text: str) -> None:
-        result = await self._registry.send(ChannelMessage(adapter=adapter, recipient=recipient, text=text))
+        return RunResult(
+            ok=True,
+            response=response_text,
+            thoughts=thoughts,
+            tool_interactions=tool_interactions,
+        )
+
+    async def _send_reply(
+        self,
+        adapter: str,
+        recipient: str,
+        text: str,
+        thoughts: list[str] | None = None,
+        tool_interactions: list[dict[str, Any]] | None = None,
+    ) -> None:
+        metadata: dict[str, Any] = {}
+        if thoughts:
+            metadata["thoughts"] = thoughts
+        if tool_interactions:
+            metadata["tool_interactions"] = tool_interactions
+        result = await self._registry.send(
+            ChannelMessage(adapter=adapter, recipient=recipient, text=text, metadata=metadata)
+        )
         if not result.get("ok"):
             logger.error("Failed to send reply: %s", result.get("error"))
 
@@ -317,8 +459,93 @@ class MultiAppBridge:
                     if self._active_count >= self._config.max_concurrent:
                         return
 
+    def _resolve_sender_key(self, message: IncomingMessage) -> str:
+        identity = self._resolve_sender_identity(message)
+        return f"{message.adapter}:{identity}"
+
+    def _resolve_sender_identity(self, message: IncomingMessage) -> str:
+        scope = self._config.session_scope
+        metadata = message.metadata
+
+        sender_channel, sender_thread = self._split_sender_thread(message.sender)
+        channel_id_raw = metadata.get("channel_id")
+        channel_id = str(channel_id_raw) if channel_id_raw is not None else sender_channel
+        thread_ts_raw = metadata.get("thread_ts")
+        thread_ts = str(thread_ts_raw) if thread_ts_raw is not None else sender_thread
+
+        if scope == "user":
+            user_id = metadata.get("user_id")
+            if user_id is not None:
+                return f"user:{user_id}"
+            username = metadata.get("user_name") or metadata.get("username")
+            if username is not None:
+                return f"user:{username}"
+            return message.sender
+
+        if scope == "channel":
+            return f"channel:{channel_id or message.sender}"
+
+        if scope == "thread":
+            if thread_ts:
+                return f"thread:{channel_id or sender_channel}:{thread_ts}"
+            return f"channel:{channel_id or sender_channel}"
+
+        return message.sender
+
+    @staticmethod
+    def _split_sender_thread(sender: str) -> tuple[str, str | None]:
+        if ":" not in sender:
+            return sender, None
+        channel, thread = sender.split(":", 1)
+        return channel, thread or None
+
+    def _resolve_session_mode(self, app_name: str, sender_key: str) -> str:
+        app_sender_key = f"{app_name}:{sender_key}"
+        for rule in self._config.session_rules:
+            if fnmatch.fnmatch(app_sender_key, rule.pattern) or fnmatch.fnmatch(sender_key, rule.pattern):
+                return rule.mode
+        return self._config.session_mode
+
+    @staticmethod
+    def _build_run_session_id(app_name: str, sender_key: str, prompt_id: str, session_mode: str) -> str:
+        base = f"{app_name}:{sender_key}"
+        if session_mode == "persistent":
+            return base
+        return f"{base}:{prompt_id}"
+
+    def _prune_idle_sessions(self, now: float) -> None:
+        idle_timeout_minutes = self._config.idle_timeout_minutes
+        if idle_timeout_minutes <= 0:
+            return
+
+        idle_timeout_seconds = idle_timeout_minutes * 60
+        removed = 0
+        for app_name in list(self._sessions.keys()):
+            app_sessions = self._sessions.get(app_name)
+            if app_sessions is None:
+                continue
+
+            stale_keys = [
+                key
+                for key, session in app_sessions.items()
+                if not session.processing
+                and not session.queue
+                and now - (session.last_activity_at or session.started_at) > idle_timeout_seconds
+            ]
+
+            for key in stale_keys:
+                app_sessions.pop(key, None)
+                removed += 1
+
+            if not app_sessions:
+                self._sessions.pop(app_name, None)
+
+        if removed:
+            logger.info("Pruned %d idle multi-app sessions", removed)
+
     def _create_session(self, message: IncomingMessage) -> SenderSession:
         display_name = message.metadata.get("user_name") or message.metadata.get("username") or message.sender
+        now = time.time()
         return SenderSession(
             adapter=message.adapter,
             sender=message.sender,
@@ -327,7 +554,8 @@ class MultiAppBridge:
             processing=False,
             abort_controller=None,
             message_count=0,
-            started_at=time.time(),
+            started_at=now,
+            last_activity_at=now,
         )
 
     def get_stats(self) -> dict[str, Any]:

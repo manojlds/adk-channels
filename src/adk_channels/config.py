@@ -22,12 +22,20 @@ class RouteConfig(BaseModel):
     recipient: str
 
 
+class SessionRule(BaseModel):
+    """Per-sender session mode override using a glob pattern."""
+
+    pattern: str
+    mode: Literal["persistent", "stateless"]
+
+
 class BridgeConfig(BaseModel):
     """Chat bridge configuration."""
 
     enabled: bool = False
     session_mode: Literal["persistent", "stateless"] = "persistent"
-    session_rules: list[dict[str, str]] = Field(default_factory=list)
+    session_scope: Literal["sender", "user", "channel", "thread"] = "sender"
+    session_rules: list[SessionRule] = Field(default_factory=list)
     idle_timeout_minutes: int = 30
     max_queue_per_sender: int = 5
     timeout_ms: int = 300_000

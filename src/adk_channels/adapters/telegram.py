@@ -37,6 +37,7 @@ class TelegramAdapter(BaseChannelAdapter):
             raise ValueError("Telegram adapter requires bot_token")
 
         self._app: Any | None = None
+        self._bot: Any | None = None
         self._on_message: OnIncomingMessage | None = None
 
     def _is_allowed(self, chat_id: int) -> bool:
@@ -44,13 +45,18 @@ class TelegramAdapter(BaseChannelAdapter):
             return True
         return chat_id in self._allowed_chat_ids
 
+    def _get_bot(self) -> Any:
+        if self._bot is None:
+            from telegram import Bot
+
+            self._bot = Bot(token=self._bot_token)
+        return self._bot
+
     async def send(self, message: ChannelMessage) -> None:
         if not message.text:
             raise ValueError("Telegram adapter requires text")
 
-        from telegram import Bot
-
-        bot = Bot(token=self._bot_token)
+        bot = self._get_bot()
         chat_id = int(message.recipient)
         prefix = f"*[{(message.source or 'adk')}] *\n" if message.source else ""
         full = prefix + message.text
@@ -74,9 +80,7 @@ class TelegramAdapter(BaseChannelAdapter):
             remaining = remaining[split_at:].lstrip("\n")
 
     async def send_typing(self, recipient: str) -> None:
-        from telegram import Bot
-
-        bot = Bot(token=self._bot_token)
+        bot = self._get_bot()
         await bot.send_chat_action(chat_id=int(recipient), action="typing")
 
     async def start(self, on_message: OnIncomingMessage) -> None:
@@ -136,3 +140,4 @@ class TelegramAdapter(BaseChannelAdapter):
             await self._app.stop()
             await self._app.shutdown()
             self._app = None
+        self._bot = None
