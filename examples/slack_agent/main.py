@@ -9,28 +9,16 @@ import os
 from google.adk.agents import Agent
 
 from adk_channels import ChannelRegistry, ChannelsConfig, ChatBridge
+from examples.agents import create_interactive_files_agent, create_tool_action_router, resolve_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("slack_agent")
 
 
 def create_agent() -> Agent:
-    """Create a simple ADK agent."""
-    return Agent(
-        model="gemini-2.0-flash",
-        name="slack_assistant",
-        description="A helpful assistant accessible via Slack",
-        instruction="""
-You are a helpful AI assistant integrated into Slack. You help users with:
-- Answering questions
-- Writing and reviewing code
-- Summarizing information
-- General productivity tasks
-
-Keep responses concise and well-formatted for Slack (use markdown).
-If you need more context, ask follow-up questions.
-        """,
-    )
+    """Create the shared tool-enabled agent used across examples."""
+    model = resolve_model(logger=logger)
+    return create_interactive_files_agent(model=model)
 
 
 async def run_bridge() -> None:
@@ -79,10 +67,13 @@ async def run_bridge() -> None:
     agent = create_agent()
 
     # Bridge with ADK integration
+    interaction_router = create_tool_action_router()
+
     bridge = ChatBridge(
         bridge_config=config.bridge,
         registry=registry,
         agent_factory=lambda: agent,
+        interaction_handler=interaction_router,
     )
     bridge.start()
 

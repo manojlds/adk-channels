@@ -41,64 +41,12 @@ from __future__ import annotations
 import logging
 import os
 
-from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
+
+from examples.agents import create_default_agent, create_engineering_agent, create_support_agent, resolve_model
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("multi_app_server")
-
-
-def create_support_agent() -> Agent:
-    """Support agent for customer-facing queries."""
-    return Agent(
-        model="gemini-2.0-flash",
-        name="support_bot",
-        description="Customer support assistant",
-        instruction="""
-You are a friendly customer support assistant. Help users with:
-- Product questions
-- Troubleshooting
-- Account issues
-- Billing inquiries
-
-Be empathetic, concise, and actionable. If you need more info, ask follow-up questions.
-Use Slack markdown for formatting.
-        """,
-    )
-
-
-def create_engineering_agent() -> Agent:
-    """Engineering agent for technical queries."""
-    return Agent(
-        model="gemini-2.0-flash",
-        name="engineering_bot",
-        description="Engineering assistant",
-        instruction="""
-You are an engineering assistant. Help with:
-- Code review and debugging
-- Architecture decisions
-- Technical documentation
-- Best practices
-
-Be precise, include code examples where helpful, and cite sources when possible.
-Use Slack markdown (code blocks, bullets) for formatting.
-        """,
-    )
-
-
-def create_default_agent() -> Agent:
-    """Default agent for general queries."""
-    return Agent(
-        model="gemini-2.0-flash",
-        name="general_bot",
-        description="General assistant",
-        instruction="""
-You are a helpful general-purpose assistant. Route or handle queries appropriately.
-If a question seems support-related, suggest contacting #support.
-If engineering-related, suggest #engineering.
-        """,
-    )
-
 
 # Channel ID to app mapping
 # In production, load this from config or database
@@ -162,6 +110,7 @@ def main() -> None:
             return
 
     config.bridge.enabled = True
+    model = resolve_model(logger=logger)
 
     # Create registry
     registry = ChannelRegistry()
@@ -173,9 +122,9 @@ def main() -> None:
         registry=registry,
         app_resolver=app_resolver,
         agent_factories={
-            "support": create_support_agent,
-            "engineering": create_engineering_agent,
-            "default": create_default_agent,
+            "support": lambda: create_support_agent(model=model),
+            "engineering": lambda: create_engineering_agent(model=model),
+            "default": lambda: create_default_agent(model=model),
         },
         session_service_factory=InMemorySessionService,
     )

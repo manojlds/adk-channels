@@ -31,27 +31,10 @@ from google.adk.agents import Agent
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 
+from examples.agents import create_engineering_agent, create_support_agent, resolve_model
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("http_client_bridge")
-
-
-# --- ADK Agents (mounted as FastAPI endpoints) ---
-
-
-def create_support_agent() -> Agent:
-    return Agent(
-        model="gemini-2.0-flash",
-        name="support_bot",
-        instruction="You are a customer support assistant. Be friendly and helpful.",
-    )
-
-
-def create_engineering_agent() -> Agent:
-    return Agent(
-        model="gemini-2.0-flash",
-        name="engineering_bot",
-        instruction="You are an engineering assistant. Be precise and technical.",
-    )
 
 
 # --- HTTP Clients for Bridge ---
@@ -138,10 +121,11 @@ def main() -> None:
             return
 
     config.bridge.enabled = True
+    model = resolve_model(logger=logger)
 
     # Create agents
-    support_agent = create_support_agent()
-    eng_agent = create_engineering_agent()
+    support_agent = create_support_agent(model=model)
+    eng_agent = create_engineering_agent(model=model)
 
     # Create HTTP clients
     support_client = InternalADKClient(support_agent, "support")

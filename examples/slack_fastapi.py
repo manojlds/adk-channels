@@ -1,7 +1,10 @@
-"""FastAPI + Slack Agent — Ready-to-run example with LiteLLM support.
+"""FastAPI + Slack agent with tool-driven interactive workflows.
 
 This example supports any OpenAI-compatible model via LiteLLM or direct
-OpenAI-compatible endpoints (e.g., opencode.ai).
+OpenAI-compatible endpoints (for example opencode.ai), and demonstrates
+tool-native Slack interactions:
+- Approval flow for delete requests
+- Multi-option selection flow
 
 Usage:
     # 1. Set tokens in .env file (see SLACK_SETUP.md)
@@ -10,11 +13,6 @@ Usage:
 
     # Or via the installed script:
     uv run adk-channels-slack
-
-Then in Slack:
-    - DM the bot directly
-    - @mention the bot in a channel
-    - Use /adk <message> slash command
 """
 
 from __future__ import annotations
@@ -26,12 +24,16 @@ from pathlib import Path
 import uvicorn
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from google.adk.agents import Agent
 
 from adk_channels import ChannelRegistry, ChannelsConfig
 from adk_channels.bridge import ChatBridge
 from adk_channels.config import AdapterConfig
 from adk_channels.server_integration import ChannelsFastAPIIntegration
+from examples.agents import (
+    create_interactive_files_agent,
+    create_tool_action_router,
+    resolve_model,
+)
 
 # Load .env from project root (one level up from this file)
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -41,52 +43,10 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname
 logger = logging.getLogger("slack_fastapi")
 
 
-def create_agent() -> Agent:
-    """Create an ADK agent with configurable model support.
-
-    Supports:
-    - Google Gemini (default): MODEL=gemini-2.0-flash + GOOGLE_API_KEY
-    - OpenAI-compatible: MODEL=openai/glm-5 + OPENAI_API_KEY + OPENAI_BASE_URL
-    - Any LiteLLM model: MODEL=openrouter/... + respective env vars
-    """
-    model = os.environ.get("MODEL", "gemini-2.0-flash")
-
-    # If using OpenAI-compatible endpoint, ensure env vars are propagated
-    # to the underlying client libraries
-    openai_key = os.environ.get("OPENAI_API_KEY")
-    openai_base = os.environ.get("OPENAI_BASE_URL") or os.environ.get("OPENAI_API_BASE")
-
-    if openai_key and openai_base and "gemini" not in model.lower():
-        logger.info("Using OpenAI-compatible model: %s via %s", model, openai_base)
-        # Ensure these are in the environment for ADK/Google GenAI SDK to pick up
-        os.environ.setdefault("OPENAI_API_KEY", openai_key)
-        os.environ.setdefault("OPENAI_BASE_URL", openai_base)
-    else:
-        logger.info("Using model: %s", model)
-
-    return Agent(
-        model=model,
-        name="slack_assistant",
-        description="A helpful assistant accessible via Slack",
-        instruction="""
-You are a helpful AI assistant integrated into Slack. You help users with:
-- Answering questions
-- Writing and reviewing code
-- Summarizing information
-- General productivity tasks
-
-Keep responses concise and well-formatted for Slack (use markdown).
-If you need more context, ask follow-up questions.
-        """,
-    )
-
-
 def main() -> None:
     """Run the FastAPI server with Slack integration."""
-    # Load config from env vars
     config = ChannelsConfig()
 
-    # Ensure Slack adapter is configured
     if "slack" not in config.adapters:
         bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
         app_token = os.environ.get("SLACK_APP_TOKEN", "")
@@ -106,22 +66,23 @@ def main() -> None:
         )
 
     config.bridge.enabled = True
+    model = resolve_model(logger=logger)
 
-    # Create registry and bridge
+    interaction_router = create_tool_action_router()
+
     registry = ChannelRegistry()
     bridge = ChatBridge(
         bridge_config=config.bridge,
         registry=registry,
-        agent_factory=create_agent,
+        agent_factory=lambda: create_interactive_files_agent(model=model),
+        interaction_handler=interaction_router,
     )
 
-    # FastAPI app
     fastapi_app = FastAPI(
         title="ADK Slack Agent",
         description="Google ADK agent connected to Slack via adk-channels",
     )
 
-    # Integrate channels into FastAPI
     integration = ChannelsFastAPIIntegration(
         fastapi_app=fastapi_app,
         registry=registry,
@@ -137,12 +98,16 @@ def main() -> None:
     logger.info("=" * 60)
     logger.info("ADK Slack Agent Server")
     logger.info("=" * 60)
-    logger.info("Model:     %s", os.environ.get("MODEL", "gemini-2.0-flash"))
+    logger.info("Model:     %s", model)
     logger.info("Health:    http://0.0.0.0:8000/channels/health")
     logger.info("Status:    http://0.0.0.0:8000/channels/status")
     logger.info("Webhooks:  http://0.0.0.0:8000/channels/webhook/{adapter}")
     logger.info("=" * 60)
     logger.info("In Slack: DM the bot, @mention it, or use /adk <msg>")
+    logger.info("Try tool flows:")
+    logger.info("  - list internal files")
+    logger.info("  - delete deployment-plan.md")
+    logger.info("  - choose multiple files for cleanup")
     logger.info("=" * 60)
 
     uvicorn.run(fastapi_app, host="0.0.0.0", port=8000)
