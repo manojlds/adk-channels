@@ -96,7 +96,14 @@ class SlackAdapter(BaseChannelAdapter):
         return text or None
 
     def get_status(self) -> dict[str, Any]:
-        """Return Slack adapter startup-discovered identity and capabilities."""
+        """Return Slack adapter startup-discovered status.
+
+        Keys:
+        - ``team_id``: Slack workspace/team ID, if authenticated.
+        - ``bot_user_id``: Slack bot user ID, if authenticated.
+        - ``granted_scopes``: sorted bot token OAuth scopes detected from Slack.
+        - ``capabilities``: capability name to availability, derived from granted scopes.
+        """
         return {
             "team_id": self._team_id,
             "bot_user_id": self._bot_user_id,
@@ -789,11 +796,11 @@ class SlackAdapter(BaseChannelAdapter):
             if not self._claim_event(event):
                 return
 
-            await self._add_processing_reaction(event)
-
             incoming = self._translate_event(event, "message")
             if incoming is None:
                 return
+
+            await self._add_processing_reaction(event)
 
             if self._on_message:
                 result = self._on_message(incoming)
@@ -811,11 +818,11 @@ class SlackAdapter(BaseChannelAdapter):
             if not self._claim_event(event):
                 return
 
-            await self._add_processing_reaction(event)
-
             incoming = self._translate_event(event, "app_mention")
             if incoming is None:
                 return
+
+            await self._add_processing_reaction(event)
 
             if self._on_message:
                 result = self._on_message(incoming)

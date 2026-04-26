@@ -375,6 +375,43 @@ async def test_send_skips_completed_reaction_without_reactions_scope() -> None:
     assert fake_web.reactions == []
 
 
+@pytest.mark.asyncio
+async def test_add_processing_reaction_when_supported() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="eyes",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+    adapter._capabilities["reactions"] = True
+
+    await adapter._add_processing_reaction({"channel": "C123", "ts": "1746044941.000001"})
+
+    assert fake_web.reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "eyes"}]
+
+
+@pytest.mark.asyncio
+async def test_add_processing_reaction_skips_without_reactions_scope() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="eyes",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+
+    await adapter._add_processing_reaction({"channel": "C123", "ts": "1746044941.000001"})
+
+    assert fake_web.reactions == []
+
+
 def test_build_tool_blocks_formats_interactions() -> None:
     adapter = _make_adapter()
     blocks = adapter._build_tool_blocks(
