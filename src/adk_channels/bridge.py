@@ -361,6 +361,8 @@ class ChatBridge:
                 return await self._run_with_adk_runner(app_name, prompt, sender_key, run_session_id)
 
             # Fallback to default if no specific app configured
+            logger.warning("No dispatch configured for app '%s', falling back to 'default'", app_name)
+
             if "default" in self._agent_runners:
                 default_session_mode = self._resolve_session_mode("default", sender_key)
                 default_run_session_id = self._build_run_session_id(
@@ -374,6 +376,18 @@ class ChatBridge:
                     response = await runner("default", default_run_session_id, prompt.text)
                 else:
                     response = runner("default", default_run_session_id, prompt.text)
+                return RunResult(ok=True, response=str(response))
+
+            if "default" in self._http_clients:
+                default_session_mode = self._resolve_session_mode("default", sender_key)
+                default_run_session_id = self._build_run_session_id(
+                    "default",
+                    sender_key,
+                    prompt.id,
+                    default_session_mode,
+                )
+                client = self._http_clients["default"]
+                response = await client(default_run_session_id, prompt.text)
                 return RunResult(ok=True, response=str(response))
 
             if "default" in self._agent_factories:
