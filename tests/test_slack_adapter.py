@@ -298,6 +298,28 @@ def test_slack_boolean_config_uses_default_for_unknown_values() -> None:
     assert _coerce_bool(1, False) is False
 
 
+def test_slack_reaction_config_defaults_to_standard_emoji_names() -> None:
+    adapter = _make_adapter()
+
+    assert adapter._processing_reaction == "eyes"
+    assert adapter._completed_reaction == "white_check_mark"
+
+
+def test_slack_reaction_config_can_disable_defaults() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="",
+            completed_reaction="",
+        )
+    )
+
+    assert adapter._processing_reaction is None
+    assert adapter._completed_reaction is None
+
+
 def test_slack_optional_string_config_trims_and_drops_empty_values() -> None:
     assert _coerce_optional_str(None) is None
     assert _coerce_optional_str("  ") is None

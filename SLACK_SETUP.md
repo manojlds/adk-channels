@@ -67,14 +67,14 @@ Recommended:
 - `mpim:history` — Read multi-party DMs
 
 Optional:
-- `reactions:write` — Add processing/completed reactions when configured; the processing reaction is removed after the reply is sent
+- `reactions:write` — Add processing/completed reactions; defaults are `eyes` and `white_check_mark`, and the processing reaction is removed after the reply is sent
 - `files:read` — Download Slack file attachments for multimodal agents
 - `files:write` — Upload generated files or images back to Slack
 - `users:read` — Resolve Slack user display names
 
 At startup, the Slack adapter authenticates the bot token and fails fast if the required bot scopes are missing. Optional scopes are detected and reported as adapter capabilities; features that need missing optional scopes are disabled or unavailable. Scope checks do not verify Event Subscriptions or whether the bot has been invited to a channel.
 
-Configure reaction names per workspace with Slack reaction names without surrounding colons, for example `eyes`, `hourglass_flowing_sand`, `white_check_mark`, or a custom emoji name:
+Configure reaction names per workspace with Slack reaction names without surrounding colons, for example `eyes`, `hourglass_flowing_sand`, `white_check_mark`, or a custom emoji name. Set a reaction config value to an empty string to disable it.
 
 ```bash
 export ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION=eyes

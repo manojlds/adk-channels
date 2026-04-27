@@ -18,6 +18,8 @@ MAX_LENGTH = 3000  # Slack block text limit; API limit is 4000 but leave margin
 EVENT_DEDUPE_TTL_SECONDS = 300
 EVENT_DEDUPE_PRUNE_INTERVAL_SECONDS = 30
 EVENT_DEDUPE_MAX_KEYS = 10_000
+DEFAULT_PROCESSING_REACTION = "eyes"
+DEFAULT_COMPLETED_REACTION = "white_check_mark"
 REQUIRED_BOT_SCOPES = frozenset({"app_mentions:read", "chat:write"})
 CAPABILITY_SCOPES = {
     "send_messages": frozenset({"chat:write"}),
@@ -77,8 +79,14 @@ class SlackAdapter(BaseChannelAdapter):
         self._reply_in_thread_by_default = _coerce_bool(model_extra.get("reply_in_thread_by_default"), True)
         self._continue_threads_without_mention = _coerce_bool(model_extra.get("continue_threads_without_mention"), True)
         self._slash_command = str(model_extra.get("slash_command", "/adk"))
-        self._processing_reaction = _coerce_optional_str(model_extra.get("processing_reaction"))
-        self._completed_reaction = _coerce_optional_str(model_extra.get("completed_reaction"))
+        self._processing_reaction_explicit = "processing_reaction" in model_extra
+        self._completed_reaction_explicit = "completed_reaction" in model_extra
+        self._processing_reaction = _coerce_optional_str(
+            model_extra.get("processing_reaction", DEFAULT_PROCESSING_REACTION)
+        )
+        self._completed_reaction = _coerce_optional_str(
+            model_extra.get("completed_reaction", DEFAULT_COMPLETED_REACTION)
+        )
 
         if not self._bot_token:
             raise ValueError("Slack adapter requires bot_token (xoxb-...)")
@@ -159,6 +167,14 @@ class SlackAdapter(BaseChannelAdapter):
     def _configured_reactions(self) -> list[str]:
         return [name for name in (self._processing_reaction, self._completed_reaction) if name]
 
+    def _explicitly_configured_reactions(self) -> list[str]:
+        reactions: list[str] = []
+        if self._processing_reaction_explicit and self._processing_reaction:
+            reactions.append(self._processing_reaction)
+        if self._completed_reaction_explicit and self._completed_reaction:
+            reactions.append(self._completed_reaction)
+        return reactions
+
     def _validate_scope_check(self, scopes: set[str]) -> None:
         if not scopes:
             raise RuntimeError(
@@ -186,10 +202,14 @@ class SlackAdapter(BaseChannelAdapter):
         )
 
         if self._configured_reactions() and not self._capabilities.get("reactions", False):
-            logger.warning(
-                "Slack reactions configured (%s) but bot token lacks reactions:write; reactions are disabled",
-                ", ".join(self._configured_reactions()),
-            )
+            explicit_reactions = self._explicitly_configured_reactions()
+            if explicit_reactions:
+                logger.warning(
+                    "Slack reactions configured (%s) but bot token lacks reactions:write; reactions are disabled",
+                    ", ".join(explicit_reactions),
+                )
+            else:
+                logger.info("Slack reactions are unavailable without reactions:write; default reactions are disabled")
 
         if self._slash_command and not self._capabilities.get("slash_commands", False):
             logger.warning(

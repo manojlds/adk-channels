@@ -346,8 +346,8 @@ Example `channels.json`:
 | `reply_in_thread_by_default` | `boolean` | For top-level channel @mentions, reply in a new thread and use that thread as sender/session key (default: `true`) |
 | `continue_threads_without_mention` | `boolean` | Continue bot-started channel threads when users reply without @mentioning the bot (default: `true`) |
 | `slash_command` | `string` | Slash command to register (default: `/adk`) |
-| `processing_reaction` | `string` | Optional reaction name to add when a Slack message/app mention is accepted for processing; removed when the reply is sent; requires `reactions:write` |
-| `completed_reaction` | `string` | Optional reaction name to add after a reply is sent; requires `reactions:write` |
+| `processing_reaction` | `string` | Reaction name to add when a Slack message/app mention is accepted for processing; removed when the reply is sent; requires `reactions:write`; default: `eyes`; set empty to disable |
+| `completed_reaction` | `string` | Reaction name to add after a reply is sent; requires `reactions:write`; default: `white_check_mark`; set empty to disable |
 
 **Startup checks:**
 - The Slack adapter calls `auth.test` at startup and reads the `x-oauth-scopes` response header.
@@ -364,7 +364,7 @@ Example `channels.json`:
 - Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
 - Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)
-- Optional processing/completed reactions when `reactions:write` is available. Use Slack reaction names without colons, e.g. `eyes`, `hourglass_flowing_sand`, or a workspace custom emoji name. Processing reactions apply to Slack message and app mention events; slash commands and interactive actions use their acknowledgement/response flow instead.
+- Processing/completed reactions default to `eyes` and `white_check_mark` when `reactions:write` is available. Use Slack reaction names without colons, e.g. `hourglass_flowing_sand` or a workspace custom emoji name. Set a reaction config value to an empty string to disable it. Processing reactions apply to Slack message and app mention events; slash commands and interactive actions use their acknowledgement/response flow instead.
 
 **Interactive tool prompts:**
 
