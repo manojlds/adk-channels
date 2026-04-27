@@ -18,6 +18,22 @@ MAX_LENGTH = 3000  # Slack block text limit; API limit is 4000 but leave margin
 EVENT_DEDUPE_TTL_SECONDS = 300
 EVENT_DEDUPE_PRUNE_INTERVAL_SECONDS = 30
 EVENT_DEDUPE_MAX_KEYS = 10_000
+DEFAULT_PROCESSING_REACTION = "eyes"
+DEFAULT_COMPLETED_REACTION = "white_check_mark"
+REQUIRED_BOT_SCOPES = frozenset({"app_mentions:read", "chat:write"})
+CAPABILITY_SCOPES = {
+    "send_messages": frozenset({"chat:write"}),
+    "app_mentions": frozenset({"app_mentions:read"}),
+    "direct_messages": frozenset({"im:history"}),
+    "public_channel_messages": frozenset({"channels:history"}),
+    "private_channel_messages": frozenset({"groups:history"}),
+    "multi_person_direct_messages": frozenset({"mpim:history"}),
+    "slash_commands": frozenset({"commands"}),
+    "reactions": frozenset({"reactions:write"}),
+    "file_downloads": frozenset({"files:read"}),
+    "file_uploads": frozenset({"files:write"}),
+    "user_lookup": frozenset({"users:read"}),
+}
 
 
 def _coerce_bool(value: Any, default: bool) -> bool:
@@ -33,6 +49,13 @@ def _coerce_bool(value: Any, default: bool) -> bool:
             return False
         return default
     return default
+
+
+def _coerce_optional_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 async def create_slack_adapter(config: AdapterConfig) -> BaseChannelAdapter:
@@ -56,6 +79,14 @@ class SlackAdapter(BaseChannelAdapter):
         self._reply_in_thread_by_default = _coerce_bool(model_extra.get("reply_in_thread_by_default"), True)
         self._continue_threads_without_mention = _coerce_bool(model_extra.get("continue_threads_without_mention"), True)
         self._slash_command = str(model_extra.get("slash_command", "/adk"))
+        self._processing_reaction_explicit = "processing_reaction" in model_extra
+        self._completed_reaction_explicit = "completed_reaction" in model_extra
+        self._processing_reaction = _coerce_optional_str(
+            model_extra.get("processing_reaction", DEFAULT_PROCESSING_REACTION)
+        )
+        self._completed_reaction = _coerce_optional_str(
+            model_extra.get("completed_reaction", DEFAULT_COMPLETED_REACTION)
+        )
 
         if not self._bot_token:
             raise ValueError("Slack adapter requires bot_token (xoxb-...)")
@@ -65,14 +96,150 @@ class SlackAdapter(BaseChannelAdapter):
         self._socket_client: Any | None = None
         self._web_client: Any | None = None
         self._bot_user_id: str | None = None
+        self._team_id: str | None = None
         self._on_message: OnIncomingMessage | None = None
         self._processed_event_keys: dict[str, float] = {}
         self._last_event_prune_at = 0.0
+        self._granted_scopes: set[str] = set()
+        self._capabilities: dict[str, bool] = dict.fromkeys(CAPABILITY_SCOPES, False)
+
+    def get_status(self) -> dict[str, Any]:
+        """Return Slack adapter startup-discovered status.
+
+        Keys:
+        - ``team_id``: Slack workspace/team ID, if authenticated.
+        - ``bot_user_id``: Slack bot user ID, if authenticated.
+        - ``granted_scopes``: sorted bot token OAuth scopes detected from Slack.
+        - ``capabilities``: capability name to availability, derived from granted scopes.
+        """
+        return {
+            "team_id": self._team_id,
+            "bot_user_id": self._bot_user_id,
+            "granted_scopes": sorted(self._granted_scopes),
+            "capabilities": dict(self._capabilities),
+        }
 
     def _is_allowed(self, channel_id: str) -> bool:
         if not self._allowed_channel_ids:
             return True
         return channel_id in self._allowed_channel_ids
+
+    @staticmethod
+    def _get_header(response: Any, name: str) -> str | None:
+        headers = getattr(response, "headers", None)
+        if headers is None:
+            return None
+
+        target = name.lower()
+
+        for key in (name, name.lower(), name.upper()):
+            value = headers.get(key) if hasattr(headers, "get") else None
+            if value is None:
+                continue
+            if isinstance(value, list | tuple):
+                value = ",".join(str(item) for item in value)
+            return str(value)
+
+        if hasattr(headers, "items"):
+            for key, value in headers.items():
+                if str(key).lower() != target:
+                    continue
+                if isinstance(value, list | tuple):
+                    value = ",".join(str(item) for item in value)
+                return str(value)
+        return None
+
+    @classmethod
+    def _extract_granted_scopes(cls, response: Any) -> set[str]:
+        scopes_header = cls._get_header(response, "x-oauth-scopes")
+        if not scopes_header:
+            return set()
+        return {scope.strip() for scope in scopes_header.split(",") if scope.strip()}
+
+    @staticmethod
+    def _build_capabilities(scopes: set[str]) -> dict[str, bool]:
+        return {name: required.issubset(scopes) for name, required in CAPABILITY_SCOPES.items()}
+
+    @staticmethod
+    def _missing_required_scopes(scopes: set[str]) -> list[str]:
+        return sorted(REQUIRED_BOT_SCOPES - scopes)
+
+    def _configured_reactions(self) -> list[str]:
+        return [name for name in (self._processing_reaction, self._completed_reaction) if name]
+
+    def _explicitly_configured_reactions(self) -> list[str]:
+        reactions: list[str] = []
+        if self._processing_reaction_explicit and self._processing_reaction:
+            reactions.append(self._processing_reaction)
+        if self._completed_reaction_explicit and self._completed_reaction:
+            reactions.append(self._completed_reaction)
+        return reactions
+
+    def _validate_scope_check(self, scopes: set[str]) -> None:
+        if not scopes:
+            raise RuntimeError(
+                "Slack startup check failed: could not inspect bot token scopes from the x-oauth-scopes response header"
+            )
+
+        missing_required = self._missing_required_scopes(scopes)
+        if missing_required:
+            required = ", ".join(sorted(REQUIRED_BOT_SCOPES))
+            missing = ", ".join(missing_required)
+            raise RuntimeError(
+                "Slack startup check failed: bot token is missing required scopes "
+                f"({missing}). Minimum required bot scopes: {required}"
+            )
+
+    def _log_scope_capabilities(self) -> None:
+        enabled = sorted(name for name, available in self._capabilities.items() if available)
+        disabled = sorted(name for name, available in self._capabilities.items() if not available)
+        logger.info(
+            "Slack startup check passed team=%s bot_user_id=%s capabilities=%s unavailable=%s",
+            self._team_id or "unknown",
+            self._bot_user_id or "unknown",
+            enabled,
+            disabled,
+        )
+
+        if self._configured_reactions() and not self._capabilities.get("reactions", False):
+            explicit_reactions = self._explicitly_configured_reactions()
+            if explicit_reactions:
+                logger.warning(
+                    "Slack reactions configured (%s) but bot token lacks reactions:write; reactions are disabled",
+                    ", ".join(explicit_reactions),
+                )
+            else:
+                logger.info("Slack reactions are unavailable without reactions:write; default reactions are disabled")
+
+        if self._slash_command and not self._capabilities.get("slash_commands", False):
+            logger.warning(
+                "Slack slash command %s is configured but bot token lacks commands; slash commands are disabled",
+                self._slash_command,
+            )
+
+        if not self._capabilities.get("direct_messages", False):
+            logger.info("Slack direct messages are unavailable without im:history")
+
+        if self._continue_threads_without_mention and not (
+            self._capabilities.get("public_channel_messages", False)
+            or self._capabilities.get("private_channel_messages", False)
+        ):
+            logger.warning(
+                "Slack thread continuation without @mention needs channels:history and/or groups:history message events"
+            )
+
+    async def _run_startup_checks(self, web: Any) -> None:
+        try:
+            auth_result = await web.auth_test()
+        except Exception as exc:
+            raise RuntimeError("Slack startup check failed: bot_token could not be authenticated") from exc
+
+        self._bot_user_id = _coerce_optional_str(auth_result.get("user_id"))
+        self._team_id = _coerce_optional_str(auth_result.get("team_id"))
+        self._granted_scopes = self._extract_granted_scopes(auth_result)
+        self._validate_scope_check(self._granted_scopes)
+        self._capabilities = self._build_capabilities(self._granted_scopes)
+        self._log_scope_capabilities()
 
     def _strip_bot_mention(self, text: str) -> str:
         if not self._bot_user_id:
@@ -230,6 +397,47 @@ class SlackAdapter(BaseChannelAdapter):
                     thread_ts = maybe_thread
 
         return channel, str(thread_ts) if thread_ts is not None else None
+
+    async def _add_reaction(self, channel: str | None, timestamp: str | None, reaction: str | None) -> None:
+        if not channel or not timestamp or not reaction or not self._capabilities.get("reactions", False):
+            return
+
+        web = self._web_client
+        if web is None:
+            return
+
+        try:
+            await web.reactions_add(channel=channel, timestamp=timestamp, name=reaction)
+        except Exception:
+            logger.debug("Failed to add Slack reaction %s", reaction, exc_info=True)
+
+    async def _remove_reaction(self, channel: str | None, timestamp: str | None, reaction: str | None) -> None:
+        if not channel or not timestamp or not reaction or not self._capabilities.get("reactions", False):
+            return
+
+        web = self._web_client
+        if web is None:
+            return
+
+        try:
+            await web.reactions_remove(channel=channel, timestamp=timestamp, name=reaction)
+        except Exception:
+            logger.debug("Failed to remove Slack reaction %s", reaction, exc_info=True)
+
+    async def _add_processing_reaction(self, event: dict[str, Any]) -> None:
+        await self._add_reaction(
+            _coerce_optional_str(event.get("channel")),
+            _coerce_optional_str(event.get("ts")),
+            self._processing_reaction,
+        )
+
+    async def _add_completed_reaction(self, metadata: dict[str, Any]) -> None:
+        """Add the configured completion reaction to the originating Slack message."""
+        # message_ts comes from block actions; timestamp comes from regular message events.
+        channel = _coerce_optional_str(metadata.get("channel_id"))
+        timestamp = _coerce_optional_str(metadata.get("message_ts") or metadata.get("timestamp"))
+        await self._remove_reaction(channel, timestamp, self._processing_reaction)
+        await self._add_reaction(channel, timestamp, self._completed_reaction)
 
     @staticmethod
     def _format_tool_interaction(interaction: dict[str, Any]) -> str:
@@ -563,6 +771,7 @@ class SlackAdapter(BaseChannelAdapter):
                     unfurl_links=False,
                     unfurl_media=False,
                 )
+            await self._add_completed_reaction(metadata)
             return
 
         # Split long messages at newlines
@@ -590,6 +799,8 @@ class SlackAdapter(BaseChannelAdapter):
             )
             remaining = remaining[split_at:].lstrip("\n")
 
+        await self._add_completed_reaction(metadata)
+
     async def send_typing(self, recipient: str) -> None:
         # Slack bots don't have typing indicators; no-op
         pass
@@ -602,12 +813,7 @@ class SlackAdapter(BaseChannelAdapter):
         self._on_message = on_message
         self._web_client = AsyncWebClient(token=self._bot_token)
 
-        # Resolve bot user ID
-        try:
-            auth_result = await self._web_client.auth_test()
-            self._bot_user_id = auth_result.get("user_id")
-        except Exception:
-            logger.warning("Could not resolve Slack bot user ID")
+        await self._run_startup_checks(self._web_client)
 
         app = AsyncApp(token=self._bot_token)
 
@@ -638,6 +844,8 @@ class SlackAdapter(BaseChannelAdapter):
             if incoming is None:
                 return
 
+            await self._add_processing_reaction(event)
+
             if self._on_message:
                 result = self._on_message(incoming)
                 if result is not None:
@@ -657,6 +865,8 @@ class SlackAdapter(BaseChannelAdapter):
             incoming = self._translate_event(event, "app_mention")
             if incoming is None:
                 return
+
+            await self._add_processing_reaction(event)
 
             if self._on_message:
                 result = self._on_message(incoming)

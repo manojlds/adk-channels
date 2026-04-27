@@ -30,6 +30,11 @@ from adk_channels.types import (
 logger = logging.getLogger("adk_channels.bridge")
 
 _id_counter = 0
+# Metadata keys preserved when the bridge turns an inbound prompt into an outbound reply.
+# Add adapter entries only for metadata required by adapter-level routing/rendering.
+_REPLY_METADATA_KEYS_BY_ADAPTER = {
+    "slack": frozenset({"channel_id", "message_ts", "thread_ts", "timestamp"}),
+}
 
 
 def _next_id() -> str:
@@ -231,6 +236,7 @@ class ChatBridge:
                 message.adapter,
                 message.sender,
                 f"Queue full ({self._config.max_queue_per_sender} pending). Wait for current prompts to finish.",
+                prompt_metadata=message.metadata,
             )
             return
 
@@ -311,12 +317,18 @@ class ChatBridge:
                     prompt.adapter,
                     prompt.sender,
                     result.response,
+                    prompt_metadata=prompt.metadata,
                     thoughts=result.thoughts,
                     tool_interactions=result.tool_interactions,
                 )
             else:
                 error_msg = result.error or "Something went wrong. Please try again."
-                await self._send_reply(prompt.adapter, prompt.sender, f"Error: {error_msg}")
+                await self._send_reply(
+                    prompt.adapter,
+                    prompt.sender,
+                    f"Error: {error_msg}",
+                    prompt_metadata=prompt.metadata,
+                )
 
             logger.info(
                 "Completed message %s for app '%s' in %.0fms (ok=%s)",
@@ -337,11 +349,17 @@ class ChatBridge:
                 prompt.adapter,
                 prompt.sender,
                 "Error: Request timed out. Please try again with a shorter prompt.",
+                prompt_metadata=prompt.metadata,
             )
 
         except Exception as exc:
             logger.exception("Error processing message %s", prompt.id)
-            await self._send_reply(prompt.adapter, prompt.sender, f"Unexpected error: {exc}")
+            await self._send_reply(
+                prompt.adapter,
+                prompt.sender,
+                f"Unexpected error: {exc}",
+                prompt_metadata=prompt.metadata,
+            )
         finally:
             session.processing = False
             self._active_count -= 1
@@ -539,15 +557,27 @@ class ChatBridge:
     # Reply helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _build_reply_metadata(adapter: str, prompt_metadata: dict[str, Any] | None) -> dict[str, Any]:
+        if not prompt_metadata:
+            return {}
+
+        allowed_keys = _REPLY_METADATA_KEYS_BY_ADAPTER.get(adapter)
+        if allowed_keys is None:
+            return {}
+
+        return {key: value for key, value in prompt_metadata.items() if key in allowed_keys}
+
     async def _send_reply(
         self,
         adapter: str,
         recipient: str,
         text: str,
+        prompt_metadata: dict[str, Any] | None = None,
         thoughts: list[str] | None = None,
         tool_interactions: list[dict[str, Any]] | None = None,
     ) -> None:
-        metadata: dict[str, Any] = {}
+        metadata = self._build_reply_metadata(adapter, prompt_metadata)
         if thoughts:
             metadata["thoughts"] = thoughts
         if tool_interactions:

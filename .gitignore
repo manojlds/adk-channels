@@ -39,6 +39,9 @@ ENV/
 .coverage
 htmlcov/
 
+# Local ADK session data
+.adk_channels/
+
 # mypy
 .mypy_cache/
 

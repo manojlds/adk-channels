@@ -2,9 +2,38 @@
 
 from __future__ import annotations
 
-from adk_channels.adapters.slack import SlackAdapter, _coerce_bool
+import pytest
+
+from adk_channels.adapters.slack import SlackAdapter, _coerce_bool, _coerce_optional_str
 from adk_channels.config import AdapterConfig
 from adk_channels.types import ChannelMessage
+
+
+class _FakeSlackResponse(dict):
+    def __init__(self, headers: dict[str, str], **values: str) -> None:
+        super().__init__(values)
+        self.headers = headers
+
+
+class _FakeSlackWebClient:
+    def __init__(self) -> None:
+        self.messages: list[dict[str, object]] = []
+        self.reactions: list[dict[str, str]] = []
+        self.removed_reactions: list[dict[str, str]] = []
+
+    async def chat_postMessage(self, **kwargs: object) -> None:  # noqa: N802
+        self.messages.append(kwargs)
+
+    async def reactions_add(self, channel: str, timestamp: str, name: str) -> None:
+        self.reactions.append({"channel": channel, "timestamp": timestamp, "name": name})
+
+    async def reactions_remove(self, channel: str, timestamp: str, name: str) -> None:
+        self.removed_reactions.append({"channel": channel, "timestamp": timestamp, "name": name})
+
+
+class _FailingAuthWebClient:
+    async def auth_test(self) -> None:
+        raise RuntimeError("invalid_auth")
 
 
 def _make_adapter() -> SlackAdapter:
@@ -267,6 +296,241 @@ def test_slack_boolean_config_uses_default_for_unknown_values() -> None:
     assert _coerce_bool("maybe", False) is False
     assert _coerce_bool("maybe", True) is True
     assert _coerce_bool(1, False) is False
+
+
+def test_slack_reaction_config_defaults_to_standard_emoji_names() -> None:
+    adapter = _make_adapter()
+
+    assert adapter._processing_reaction == "eyes"
+    assert adapter._completed_reaction == "white_check_mark"
+
+
+def test_slack_reaction_config_can_disable_defaults() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="",
+            completed_reaction="",
+        )
+    )
+
+    assert adapter._processing_reaction is None
+    assert adapter._completed_reaction is None
+
+
+def test_slack_optional_string_config_trims_and_drops_empty_values() -> None:
+    assert _coerce_optional_str(None) is None
+    assert _coerce_optional_str("  ") is None
+    assert _coerce_optional_str(" eyes ") == "eyes"
+
+
+def test_extracts_slack_scopes_from_auth_response_header() -> None:
+    response = _FakeSlackResponse(
+        {"x-oauth-scopes": "chat:write, app_mentions:read, reactions:write"},
+        user_id="U123",
+        team_id="T123",
+    )
+
+    assert SlackAdapter._extract_granted_scopes(response) == {
+        "app_mentions:read",
+        "chat:write",
+        "reactions:write",
+    }
+
+
+def test_get_header_matches_mixed_case_headers() -> None:
+    response = _FakeSlackResponse({"X-Oauth-Scopes": "chat:write"})
+
+    assert SlackAdapter._get_header(response, "x-oauth-scopes") == "chat:write"
+
+
+def test_get_status_defaults_before_startup() -> None:
+    adapter = _make_adapter()
+
+    assert adapter.get_status() == {
+        "team_id": None,
+        "bot_user_id": None,
+        "granted_scopes": [],
+        "capabilities": {
+            "app_mentions": False,
+            "direct_messages": False,
+            "file_downloads": False,
+            "file_uploads": False,
+            "multi_person_direct_messages": False,
+            "private_channel_messages": False,
+            "public_channel_messages": False,
+            "reactions": False,
+            "send_messages": False,
+            "slash_commands": False,
+            "user_lookup": False,
+        },
+    }
+
+
+def test_startup_scope_check_fails_when_required_scope_missing() -> None:
+    adapter = _make_adapter()
+
+    with pytest.raises(RuntimeError, match="chat:write"):
+        adapter._validate_scope_check({"app_mentions:read"})
+
+
+def test_startup_scope_check_fails_when_scope_header_missing() -> None:
+    adapter = _make_adapter()
+
+    with pytest.raises(RuntimeError, match="could not inspect"):
+        adapter._validate_scope_check(set())
+
+
+@pytest.mark.asyncio
+async def test_startup_scope_check_fails_when_auth_test_fails() -> None:
+    adapter = _make_adapter()
+
+    with pytest.raises(RuntimeError, match="could not be authenticated"):
+        await adapter._run_startup_checks(_FailingAuthWebClient())
+
+
+def test_startup_capabilities_are_derived_from_scopes() -> None:
+    capabilities = SlackAdapter._build_capabilities(
+        {"app_mentions:read", "chat:write", "im:history", "reactions:write"}
+    )
+
+    assert capabilities["send_messages"] is True
+    assert capabilities["app_mentions"] is True
+    assert capabilities["direct_messages"] is True
+    assert capabilities["reactions"] is True
+    assert capabilities["file_downloads"] is False
+
+
+@pytest.mark.asyncio
+async def test_send_adds_completed_reaction_when_supported() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            completed_reaction="white_check_mark",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+    adapter._capabilities["reactions"] = True
+
+    await adapter.send(
+        ChannelMessage(
+            adapter="slack",
+            recipient="C123:1746044940.123400",
+            text="done",
+            metadata={"channel_id": "C123", "timestamp": "1746044941.000001"},
+        )
+    )
+
+    assert fake_web.messages[0]["channel"] == "C123"
+    assert fake_web.reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "white_check_mark"}]
+
+
+@pytest.mark.asyncio
+async def test_send_skips_completed_reaction_without_reactions_scope() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            completed_reaction="white_check_mark",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+
+    await adapter.send(
+        ChannelMessage(
+            adapter="slack",
+            recipient="C123:1746044940.123400",
+            text="done",
+            metadata={"channel_id": "C123", "timestamp": "1746044941.000001"},
+        )
+    )
+
+    assert fake_web.messages
+    assert fake_web.reactions == []
+
+
+@pytest.mark.asyncio
+async def test_add_completed_reaction_removes_processing_reaction_first() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="eyes",
+            completed_reaction="white_check_mark",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+    adapter._capabilities["reactions"] = True
+
+    await adapter._add_completed_reaction({"channel_id": "C123", "timestamp": "1746044941.000001"})
+
+    assert fake_web.removed_reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "eyes"}]
+    assert fake_web.reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "white_check_mark"}]
+
+
+@pytest.mark.asyncio
+async def test_add_completed_reaction_uses_timestamp_fallback() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            completed_reaction="white_check_mark",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+    adapter._capabilities["reactions"] = True
+
+    await adapter._add_completed_reaction({"channel_id": "C123", "timestamp": "1746044941.000001"})
+
+    assert fake_web.reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "white_check_mark"}]
+
+
+@pytest.mark.asyncio
+async def test_add_processing_reaction_when_supported() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="eyes",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+    adapter._capabilities["reactions"] = True
+
+    await adapter._add_processing_reaction({"channel": "C123", "ts": "1746044941.000001"})
+
+    assert fake_web.reactions == [{"channel": "C123", "timestamp": "1746044941.000001", "name": "eyes"}]
+
+
+@pytest.mark.asyncio
+async def test_add_processing_reaction_skips_without_reactions_scope() -> None:
+    adapter = SlackAdapter(
+        AdapterConfig(
+            type="slack",
+            bot_token="xoxb-test",
+            app_token="xapp-test",
+            processing_reaction="eyes",
+        )
+    )
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+
+    await adapter._add_processing_reaction({"channel": "C123", "ts": "1746044941.000001"})
+
+    assert fake_web.reactions == []
 
 
 def test_build_tool_blocks_formats_interactions() -> None:

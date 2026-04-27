@@ -67,6 +67,10 @@ export ADK_CHANNELS_BRIDGE__ENABLED=true
 # Optional: restrict to specific channels
 export ADK_CHANNELS_ADAPTERS__SLACK__ALLOWED_CHANNEL_IDS='["C0123456789"]'
 
+# Optional: customize per-workspace reaction names, without surrounding colons
+export ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION=eyes
+export ADK_CHANNELS_ADAPTERS__SLACK__COMPLETED_REACTION=white_check_mark
+
 # Optional: only respond to @mentions in channels
 export ADK_CHANNELS_ADAPTERS__SLACK__RESPOND_TO_MENTIONS_ONLY=true
 
@@ -270,6 +274,8 @@ Use double underscores (`__`) as nested delimiters:
 ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack
 ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN=xoxb-...
 ADK_CHANNELS_ADAPTERS__SLACK__APP_TOKEN=xapp-...
+ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION=eyes
+ADK_CHANNELS_ADAPTERS__SLACK__COMPLETED_REACTION=white_check_mark
 
 # Routes
 ADK_CHANNELS_ROUTES__OPS__ADAPTER=slack
@@ -340,15 +346,25 @@ Example `channels.json`:
 | `reply_in_thread_by_default` | `boolean` | For top-level channel @mentions, reply in a new thread and use that thread as sender/session key (default: `true`) |
 | `continue_threads_without_mention` | `boolean` | Continue bot-started channel threads when users reply without @mentioning the bot (default: `true`) |
 | `slash_command` | `string` | Slash command to register (default: `/adk`) |
+| `processing_reaction` | `string` | Reaction name to add when a Slack message/app mention is accepted for processing; removed when the reply is sent; requires `reactions:write`; default: `eyes`; set empty to disable |
+| `completed_reaction` | `string` | Reaction name to add after a reply is sent; requires `reactions:write`; default: `white_check_mark`; set empty to disable |
+
+**Startup checks:**
+- The Slack adapter calls `auth.test` at startup and reads the `x-oauth-scopes` response header.
+- Startup fails if the bot token cannot be authenticated or is missing the minimum bot scopes: `chat:write`, `app_mentions:read`.
+- Optional capabilities are detected from granted scopes and exposed in adapter status: DMs (`im:history`), public channel message events (`channels:history`), private channel message events (`groups:history`), MPIM events (`mpim:history`), slash commands (`commands`), reactions (`reactions:write`), file downloads (`files:read`), file uploads (`files:write`), and user lookup (`users:read`).
+- Socket Mode still requires an App-Level Token (`xapp-...`) with `connections:write`; Slack validates that when the Socket Mode connection is opened.
+- Scope checks do not prove Event Subscriptions or channel membership are configured; Slack only delivers events the app has subscribed to and conversations the bot can access.
 
 **Features:**
-- Responds to DMs automatically
+- Responds to DMs automatically when `im:history` is granted and `message.im` is subscribed
 - Responds to @mentions in channels (if `respond_to_mentions_only` is false, responds to all messages in allowed channels)
 - Supports slash commands with instant acknowledgment
 - Thread-aware: top-level channel @mentions start a thread by default; replies in bot-started threads continue without repeated @mentions when channel message events are subscribed; top-level DMs stay in the DM conversation
 - Translates interactive block actions (buttons/selects) into bridge `IncomingMessage` events
 - Long message splitting (splits at 3000 chars)
 - Tool interaction translation (ADK tool-call/tool-result events rendered as Slack-native blocks)
+- Processing/completed reactions default to `eyes` and `white_check_mark` when `reactions:write` is available. Use Slack reaction names without colons, e.g. `hourglass_flowing_sand` or a workspace custom emoji name. Set a reaction config value to an empty string to disable it. Processing reactions apply to Slack message and app mention events; slash commands and interactive actions use their acknowledgement/response flow instead.
 
 **Interactive tool prompts:**
 
