@@ -74,12 +74,7 @@ Optional:
 
 At startup, the Slack adapter authenticates the bot token and fails fast if the required bot scopes are missing. Optional scopes are detected and reported as adapter capabilities; features that need missing optional scopes are disabled or unavailable. Scope checks do not verify Event Subscriptions or whether the bot has been invited to a channel.
 
-Configure reaction names per workspace with Slack reaction names without surrounding colons, for example `eyes`, `hourglass_flowing_sand`, `white_check_mark`, or a custom emoji name. Set a reaction config value to an empty string to disable it.
-
-```bash
-export ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION=eyes
-export ADK_CHANNELS_ADAPTERS__SLACK__COMPLETED_REACTION=white_check_mark
-```
+Defaults use Slack reaction names `eyes` and `white_check_mark`. When using full `ADK_CHANNELS_ADAPTERS__SLACK__*` adapter configuration, customize them with `ADK_CHANNELS_ADAPTERS__SLACK__PROCESSING_REACTION` and `ADK_CHANNELS_ADAPTERS__SLACK__COMPLETED_REACTION`; set a reaction config value to an empty string to disable it. Do not set only these nested adapter variables alongside `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN`, because nested adapter env vars must include `ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack` and token fields too.
 
 Processing reactions apply to Slack message and app mention events. Slash commands and interactive actions use their acknowledgement/response flow instead of message reactions.
 
