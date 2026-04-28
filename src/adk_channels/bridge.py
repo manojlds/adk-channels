@@ -46,6 +46,7 @@ def _next_id() -> str:
 AppResolver = Callable[[IncomingMessage], str | Awaitable[str]]
 AgentFactory = Callable[[], Any]
 AgentRunner = Callable[[str, str, str], Any]  # (app_name, session_id, text) -> response
+HttpClient = Callable[[str, str], Awaitable[str | RunResult]]  # (session_id, text) -> response
 
 
 class ChatBridge:
@@ -71,7 +72,7 @@ class ChatBridge:
         app_resolver: AppResolver | None = None,
         agent_factories: dict[str, AgentFactory] | None = None,
         agent_runners: dict[str, AgentRunner] | None = None,
-        http_clients: dict[str, Callable[[str, str], Awaitable[str]]] | None = None,
+        http_clients: dict[str, HttpClient] | None = None,
         session_service_factory: Callable[[], Any] | None = None,
         # Shared
         interaction_handler: InteractionHandler | None = None,
@@ -93,7 +94,7 @@ class ChatBridge:
             agent_runners: Mapping of ``app_name -> runner`` where runner
                 signature is ``(app_name, session_id, text) -> response``.
             http_clients: Mapping of ``app_name -> async HTTP client`` with
-                signature ``(session_id, text) -> response``.
+                signature ``(session_id, text) -> str | RunResult``.
             session_service_factory: Optional factory for a shared ADK
                 SessionService instance.
             interaction_handler: Optional callback invoked before agent routing
@@ -133,7 +134,7 @@ class ChatBridge:
         self._app_resolver: AppResolver = app_resolver or (lambda _msg: "default")
         self._agent_factories = merged_factories
         self._agent_runners = merged_runners
-        self._http_clients: dict[str, Callable[[str, str], Awaitable[str]]] = dict(http_clients) if http_clients else {}
+        self._http_clients: dict[str, HttpClient] = dict(http_clients) if http_clients else {}
 
         # Per-app, per-sender sessions: {app_name: {sender_key: SenderSession}}
         self._sessions: dict[str, dict[str, SenderSession]] = {}
@@ -480,17 +481,23 @@ class ChatBridge:
                 response = await runner(app_name, run_session_id, prompt.text)
             else:
                 response = runner(app_name, run_session_id, prompt.text)
-            return RunResult(ok=True, response=str(response))
+            return self._coerce_run_result(response)
 
         if app_name in self._http_clients:
             client = self._http_clients[app_name]
             response = await client(run_session_id, prompt.text)
-            return RunResult(ok=True, response=str(response))
+            return self._coerce_run_result(response)
 
         if app_name in self._agent_factories:
             return await self._run_with_adk_runner(app_name, prompt, sender_key, run_session_id)
 
         return RunResult(ok=False, response="", error=f"No agent configured for app '{app_name}'")
+
+    @staticmethod
+    def _coerce_run_result(response: Any) -> RunResult:
+        if isinstance(response, RunResult):
+            return response
+        return RunResult(ok=True, response=str(response))
 
     async def _run_with_adk_runner(
         self,

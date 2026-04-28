@@ -10,7 +10,7 @@ import pytest
 from adk_channels import ChatBridge
 from adk_channels.config import BridgeConfig
 from adk_channels.registry import ChannelRegistry
-from adk_channels.types import IncomingMessage
+from adk_channels.types import IncomingMessage, RunResult
 
 
 class FakeAdapter:
@@ -136,6 +136,28 @@ class TestMultiAppRouting:
         assert len(calls) == 1
         assert calls[0][1] == "hello"
         assert any("HTTP default" in (m.text or "") for m in fake_adapter.sent_messages)
+
+    @pytest.mark.asyncio
+    async def test_http_client_run_result_metadata(self, registry, fake_adapter):
+        """Test http_clients can preserve rich RunResult metadata."""
+
+        async def default_client(session, text):
+            return RunResult(ok=True, response="HTTP default", thoughts=["reasoning"])
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            registry=registry,
+            http_clients={"default": default_client},
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+        await asyncio.sleep(0.1)
+
+        bridge.stop()
+
+        assert fake_adapter.sent_messages[-1].text == "HTTP default"
+        assert fake_adapter.sent_messages[-1].metadata["thoughts"] == ["reasoning"]
 
     @pytest.mark.asyncio
     async def test_stateless_session_mode_uses_unique_session_ids(self, registry):

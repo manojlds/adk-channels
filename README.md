@@ -241,8 +241,25 @@ The `app_resolver` function is called for every incoming message. You can route 
 `ChatBridge` with `app_resolver` supports three ways to invoke agents (checked in order):
 
 1. **`agent_runners`** — Custom async/sync callables: `runner(app_name, session_id, text) -> str`
-2. **`http_clients`** — HTTP clients that call ADK endpoints internally: `client(session_id, text) -> str`
+2. **`http_clients`** — HTTP clients that call ADK endpoints internally: `client(session_id, text) -> str | RunResult`
 3. **`agent_factories`** — Direct ADK `Runner` invocation with optional shared `SessionService`
+
+### Existing ADK Backend as a Separate Process
+
+If your ADK backend is already running, keep Slack Socket Mode in a separate single-replica process and use `http_clients` to call the backend. See `examples/two_process_deployment/` for a runnable split-process setup using ADK's official FastAPI session endpoints and `/run` endpoint:
+
+```bash
+# Terminal 1: ADK backend
+uv run python examples/two_process_deployment/backend.py
+
+# Terminal 2: Slack bridge
+export SLACK_BOT_TOKEN=xoxb-your-token
+export SLACK_APP_TOKEN=xapp-your-token
+export ADK_BACKEND_URL=http://127.0.0.1:8001
+uv run python examples/two_process_deployment/slack_bridge.py
+```
+
+In this pattern, scale the ADK backend normally, but run only one Slack bridge replica per Slack app token unless you add leader election.
 
 ### Convenience Factory
 
