@@ -71,16 +71,19 @@ class TestConfig:
         assert cfg.session_mode == "persistent"
         assert cfg.session_scope == "sender"
         assert cfg.max_concurrent == 2
+        assert cfg.send_thoughts is True
 
     def test_channels_config_from_env(self, monkeypatch):
         monkeypatch.setenv("ADK_CHANNELS_ADAPTERS__SLACK__TYPE", "slack")
         monkeypatch.setenv("ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN", "xoxb-test")
         monkeypatch.setenv("ADK_CHANNELS_BRIDGE__ENABLED", "true")
+        monkeypatch.setenv("ADK_CHANNELS_BRIDGE__SEND_THOUGHTS", "false")
 
         config = ChannelsConfig()
         assert "slack" in config.adapters
         assert config.adapters["slack"].type == "slack"
         assert config.bridge.enabled is True
+        assert config.bridge.send_thoughts is False
 
     def test_route_config(self):
         route = RouteConfig(adapter="slack", recipient="C123")
@@ -219,6 +222,46 @@ class TestBridge:
             "thread_ts": "thread-1",
             "timestamp": "1746044941.000001",
         }
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_sends_thought_metadata_by_default(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_runner=lambda s, t: RunResult(ok=True, response="Echo", thoughts=["Useful thought"]),
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+        await asyncio.sleep(0.1)
+
+        assert fake_adapter.sent_messages[0].metadata["thoughts"] == ["Useful thought"]
+        bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_can_disable_thought_metadata(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True, send_thoughts=False),
+            registry=registry,
+            agent_runner=lambda s, t: RunResult(ok=True, response="Echo", thoughts=["Hidden thought"]),
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+        await asyncio.sleep(0.1)
+
+        assert "thoughts" not in fake_adapter.sent_messages[0].metadata
         bridge.stop()
 
     @pytest.mark.asyncio

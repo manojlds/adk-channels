@@ -303,6 +303,7 @@ ADK_CHANNELS_BRIDGE__ENABLED=true
 ADK_CHANNELS_BRIDGE__SESSION_MODE=persistent
 ADK_CHANNELS_BRIDGE__MAX_QUEUE_PER_SENDER=5
 ADK_CHANNELS_BRIDGE__MAX_CONCURRENT=2
+ADK_CHANNELS_BRIDGE__SEND_THOUGHTS=true
 ```
 
 ### JSON Config File
@@ -582,6 +583,7 @@ Ephemeral state still exists outside the ADK session service:
 | `timeout_ms` | `300000` | Per-prompt timeout (5 min) |
 | `max_concurrent` | `2` | Max senders processed in parallel |
 | `typing_indicators` | `true` | Send typing indicators while processing |
+| `send_thoughts` | `true` | Include ADK thought parts in channel replies when available |
 
 ### Custom Agent Runner
 

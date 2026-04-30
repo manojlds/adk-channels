@@ -41,6 +41,7 @@ class BridgeConfig(BaseModel):
     timeout_ms: int = 300_000
     max_concurrent: int = 2
     typing_indicators: bool = True
+    send_thoughts: bool = True
     commands: bool = True
 
 

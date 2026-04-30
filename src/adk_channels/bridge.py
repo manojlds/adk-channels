@@ -319,7 +319,7 @@ class ChatBridge:
                     prompt.sender,
                     result.response,
                     prompt_metadata=prompt.metadata,
-                    thoughts=result.thoughts,
+                    thoughts=result.thoughts if self._config.send_thoughts else None,
                     tool_interactions=result.tool_interactions,
                 )
             else:
