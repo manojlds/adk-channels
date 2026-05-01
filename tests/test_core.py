@@ -265,6 +265,79 @@ class TestBridge:
         bridge.stop()
 
     @pytest.mark.asyncio
+    async def test_bridge_uses_only_final_adk_event_text_but_keeps_interactions(self, fake_adapter, monkeypatch):
+        import google.adk.runners
+
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        class FakePart:
+            def __init__(self, text=None, *, thought=False, function_call=None):
+                self.text = text
+                self.thought = thought
+                self.function_call = function_call
+
+        class FakeFunctionCall:
+            name = "search_docs"
+            args = {"query": "sessions"}
+
+        class FakeContent:
+            def __init__(self, parts):
+                self.parts = parts
+
+        class FakeEvent:
+            def __init__(self, parts, *, final):
+                self.content = FakeContent(parts)
+                self._final = final
+
+            def is_final_response(self):
+                return self._final
+
+        class FakeRunner:
+            def __init__(self, **kwargs):
+                pass
+
+            async def run_async(self, **kwargs):
+                yield FakeEvent(
+                    [
+                        FakePart("intermediate text"),
+                        FakePart("useful thought", thought=True),
+                        FakePart(function_call=FakeFunctionCall()),
+                    ],
+                    final=False,
+                )
+                yield FakeEvent([FakePart("final answer")], final=True)
+
+        class FakeSessionService:
+            async def get_session(self, **kwargs):
+                return None
+
+            async def create_session(self, **kwargs):
+                return object()
+
+        monkeypatch.setattr(google.adk.runners, "Runner", FakeRunner)
+
+        from adk_channels.bridge import ChatBridge
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(enabled=True),
+            registry=registry,
+            agent_factories={"default": object},
+            session_service_factory=FakeSessionService,
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+        await asyncio.sleep(0.1)
+
+        sent = fake_adapter.sent_messages[0]
+        assert sent.text == "final answer"
+        assert sent.metadata["thoughts"] == ["useful thought"]
+        assert sent.metadata["tool_interactions"][0]["type"] == "tool_call"
+        assert sent.metadata["tool_interactions"][0]["name"] == "search_docs"
+        bridge.stop()
+
+    @pytest.mark.asyncio
     async def test_bridge_stateless_mode_uses_unique_session_ids(self, fake_adapter):
         registry = ChannelRegistry()
         registry.register("slack", fake_adapter)

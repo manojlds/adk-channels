@@ -546,8 +546,9 @@ class ChatBridge:
             if event.content and event.content.parts:
                 part_thoughts, part_responses, part_tools = collect_part_outputs(event.content.parts)
                 thoughts.extend(part_thoughts)
-                responses.extend(part_responses)
                 tool_interactions.extend(part_tools)
+                if event.is_final_response():
+                    responses.extend(part_responses)
 
         response_text = "\n".join(responses).strip()
         if not response_text:
