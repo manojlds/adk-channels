@@ -56,8 +56,6 @@ async def main() -> None:
             respond_to_mentions_only=True,
         )
 
-    config.bridge.enabled = True
-
     registry = ChannelRegistry()
     await registry.load_config(config)
 

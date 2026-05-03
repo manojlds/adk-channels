@@ -55,8 +55,6 @@ async def main() -> None:
             app_token=app_token,
         )
 
-    config.bridge.enabled = True
-
     registry = ChannelRegistry()
     await registry.load_config(config)
 

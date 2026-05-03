@@ -37,7 +37,6 @@ async def run_bridge() -> None:
     #   ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack
     #   ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN=xoxb-...
     #   ADK_CHANNELS_ADAPTERS__SLACK__APP_TOKEN=xapp-...
-    #   ADK_CHANNELS_BRIDGE__ENABLED=true
 
     config = ChannelsConfig()
 
@@ -62,8 +61,6 @@ async def run_bridge() -> None:
                 "  ADK_CHANNELS_ADAPTERS__SLACK__APP_TOKEN=xapp-..."
             )
             return
-
-    config.bridge.enabled = True
 
     # Set up registry
     registry = ChannelRegistry()

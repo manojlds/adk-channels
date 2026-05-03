@@ -67,7 +67,6 @@ class TestConfig:
 
     def test_bridge_config_defaults(self):
         cfg = BridgeConfig()
-        assert cfg.enabled is False
         assert cfg.session_mode == "persistent"
         assert cfg.session_scope == "sender"
         assert cfg.max_concurrent == 2
@@ -76,13 +75,11 @@ class TestConfig:
     def test_channels_config_from_env(self, monkeypatch):
         monkeypatch.setenv("ADK_CHANNELS_ADAPTERS__SLACK__TYPE", "slack")
         monkeypatch.setenv("ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN", "xoxb-test")
-        monkeypatch.setenv("ADK_CHANNELS_BRIDGE__ENABLED", "true")
         monkeypatch.setenv("ADK_CHANNELS_BRIDGE__SEND_THOUGHTS", "false")
 
         config = ChannelsConfig()
         assert "slack" in config.adapters
         assert config.adapters["slack"].type == "slack"
-        assert config.bridge.enabled is True
         assert config.bridge.send_thoughts is False
 
     def test_route_config(self):
@@ -151,7 +148,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=lambda s, t: f"Echo: {t}",
         )
@@ -168,7 +165,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            bridge_config=BridgeConfig(max_concurrent=1),
             registry=registry,
             agent_runner=lambda s, t: f"Echo: {t}",
         )
@@ -193,7 +190,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            bridge_config=BridgeConfig(max_concurrent=1),
             registry=registry,
             agent_runner=lambda s, t: f"Echo: {t}",
         )
@@ -232,7 +229,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=lambda s, t: RunResult(ok=True, response="Echo", thoughts=["Useful thought"]),
         )
@@ -252,7 +249,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, send_thoughts=False),
+            bridge_config=BridgeConfig(send_thoughts=False),
             registry=registry,
             agent_runner=lambda s, t: RunResult(ok=True, response="Echo", thoughts=["Hidden thought"]),
         )
@@ -320,7 +317,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_factories={"default": object},
             session_service_factory=FakeSessionService,
@@ -351,7 +348,7 @@ class TestBridge:
             return f"Echo: {text}"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, session_mode="stateless"),
+            bridge_config=BridgeConfig(session_mode="stateless"),
             registry=registry,
             agent_runner=capture_runner,
         )
@@ -382,7 +379,6 @@ class TestBridge:
 
         bridge = ChatBridge(
             bridge_config=BridgeConfig(
-                enabled=True,
                 session_mode="persistent",
                 session_scope="user",
                 session_rules=[SessionRule(pattern="slack:user:U*", mode="stateless")],
@@ -428,7 +424,7 @@ class TestBridge:
             return f"Echo: {text}"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, timeout_ms=10),
+            bridge_config=BridgeConfig(timeout_ms=10),
             registry=registry,
             agent_runner=slow_runner,
         )
@@ -439,6 +435,42 @@ class TestBridge:
 
         assert any("timed out" in (msg.text or "").lower() for msg in fake_adapter.sent_messages)
         bridge.stop()
+
+    @pytest.mark.asyncio
+    async def test_bridge_stop_cancels_in_flight_processing_without_reply(self, fake_adapter):
+        registry = ChannelRegistry()
+        registry.register("slack", fake_adapter)
+
+        from adk_channels.bridge import ChatBridge
+
+        runner_started = asyncio.Event()
+        runner_cancelled = asyncio.Event()
+
+        async def stubborn_runner(session_id: str, text: str) -> str:
+            runner_started.set()
+            try:
+                await asyncio.sleep(10)
+            except asyncio.CancelledError:
+                runner_cancelled.set()
+                return "late reply"
+            return f"Echo: {text}"
+
+        bridge = ChatBridge(
+            bridge_config=BridgeConfig(timeout_ms=0),
+            registry=registry,
+            agent_runner=stubborn_runner,
+        )
+        bridge.start()
+
+        await bridge.handle_message(IncomingMessage(adapter="slack", sender="U123", text="hello"))
+        await asyncio.wait_for(runner_started.wait(), timeout=1)
+
+        bridge.stop()
+        await asyncio.wait_for(runner_cancelled.wait(), timeout=1)
+        await asyncio.sleep(0.05)
+
+        assert fake_adapter.sent_messages == []
+        assert bridge.get_stats()["active_prompts"] == 0
 
     @pytest.mark.asyncio
     async def test_bridge_interaction_handler_short_circuits_agent(self, fake_adapter):
@@ -460,7 +492,7 @@ class TestBridge:
             return None
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=runner,
             interaction_handler=interaction_handler,
@@ -496,7 +528,7 @@ class TestBridge:
             return False
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=lambda session, text: f"Echo: {text}",
             interaction_handler=interaction_handler,
@@ -530,7 +562,7 @@ class TestBridge:
             return f"Echo: {text}"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=runner,
         )
@@ -564,7 +596,7 @@ class TestBridge:
             return f"Echo: {text}"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=runner,
         )
@@ -603,7 +635,7 @@ class TestBridge:
         service = ExistingSessionService()
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runner=lambda session_id, text: f"Echo: {text}",
             session_service_factory=lambda: service,
@@ -633,7 +665,7 @@ class TestBridge:
         from adk_channels.bridge import ChatBridge
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
         )
         bridge.start()

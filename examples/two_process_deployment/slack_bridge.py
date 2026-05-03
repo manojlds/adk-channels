@@ -249,7 +249,6 @@ class ADKBackendClient:
 def _build_config() -> ChannelsConfig:
     config = ChannelsConfig()
     if "slack" in config.adapters:
-        config.bridge.enabled = True
         return config
 
     bot_token = os.environ.get("SLACK_BOT_TOKEN", "")
@@ -266,7 +265,6 @@ def _build_config() -> ChannelsConfig:
         app_token=app_token,
         respond_to_mentions_only=True,
     )
-    config.bridge.enabled = True
     return config
 
 

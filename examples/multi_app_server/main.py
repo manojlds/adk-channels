@@ -27,7 +27,6 @@ Usage:
     export ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack
     export ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN=xoxb-...
     export ADK_CHANNELS_ADAPTERS__SLACK__APP_TOKEN=xapp-...
-    export ADK_CHANNELS_BRIDGE__ENABLED=true
 
     uv run python examples/multi_app_server/main.py
 
@@ -116,7 +115,6 @@ def main() -> None:
             logger.error("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars")
             return
 
-    config.bridge.enabled = True
     model = resolve_model(logger=logger)
 
     # Create registry

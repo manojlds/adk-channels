@@ -7,7 +7,6 @@ Before running any template, set Slack credentials:
 ```bash
 export SLACK_BOT_TOKEN=xoxb-your-bot-token
 export SLACK_APP_TOKEN=xapp-your-app-token
-export ADK_CHANNELS_BRIDGE__ENABLED=true
 ```
 
 Optional:
@@ -50,8 +49,6 @@ async def main() -> None:
             bot_token=os.environ["SLACK_BOT_TOKEN"],
             app_token=os.environ["SLACK_APP_TOKEN"],
         )
-
-    config.bridge.enabled = True
 
     registry = ChannelRegistry()
     await registry.load_config(config)
@@ -222,8 +219,6 @@ async def main() -> None:
             app_token=os.environ["SLACK_APP_TOKEN"],
         )
 
-    config.bridge.enabled = True
-
     registry = ChannelRegistry()
     await registry.load_config(config)
 
@@ -341,8 +336,6 @@ def main() -> None:
             bot_token=os.environ["SLACK_BOT_TOKEN"],
             app_token=os.environ["SLACK_APP_TOKEN"],
         )
-
-    config.bridge.enabled = True
 
     registry = ChannelRegistry()
     bridge = ChatBridge(

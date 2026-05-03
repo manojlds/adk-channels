@@ -73,7 +73,6 @@ def main() -> None:
             respond_to_mentions_only=True,
         )
 
-    config.bridge.enabled = True
     model = resolve_model(logger=logger)
 
     interaction_router = create_tool_action_router()

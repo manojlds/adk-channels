@@ -130,7 +130,6 @@ def main() -> None:
             logger.error("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN")
             return
 
-    config.bridge.enabled = True
     model = resolve_model(logger=logger)
 
     # Create agents

@@ -38,8 +38,6 @@ async def main() -> None:
             logger.error("Set SLACK_BOT_TOKEN and SLACK_APP_TOKEN env vars")
             return
 
-    config.bridge.enabled = True
-
     registry = ChannelRegistry()
     await registry.load_config(config)
 

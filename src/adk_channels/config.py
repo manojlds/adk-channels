@@ -32,7 +32,6 @@ class SessionRule(BaseModel):
 class BridgeConfig(BaseModel):
     """Chat bridge configuration."""
 
-    enabled: bool = False
     session_mode: Literal["persistent", "stateless"] = "persistent"
     session_scope: Literal["sender", "user", "channel", "thread"] = "sender"
     session_rules: list[SessionRule] = Field(default_factory=list)

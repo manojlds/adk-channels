@@ -138,6 +138,7 @@ class ChatBridge:
 
         # Per-app, per-sender sessions: {app_name: {sender_key: SenderSession}}
         self._sessions: dict[str, dict[str, SenderSession]] = {}
+        self._processing_tasks: set[asyncio.Task[None]] = set()
         self._active_count = 0
         self._running = False
 
@@ -164,6 +165,9 @@ class ChatBridge:
 
     def stop(self) -> None:
         self._running = False
+        for task in list(self._processing_tasks):
+            task.cancel()
+        self._processing_tasks.clear()
         for app_sessions in self._sessions.values():
             for session in app_sessions.values():
                 if session.abort_controller:
@@ -271,6 +275,9 @@ class ChatBridge:
 
     def _schedule_process(self, app_name: str, sender_key: str) -> None:
         """Synchronously claim a processing slot and spawn a background task."""
+        if not self._running:
+            return
+
         app_sessions = self._sessions.get(app_name)
         if not app_sessions:
             return
@@ -284,25 +291,28 @@ class ChatBridge:
         self._active_count += 1
         prompt = session.queue.pop(0)
 
-        asyncio.create_task(self._process_prompt(app_name, sender_key, prompt))
+        task = asyncio.create_task(self._process_prompt(app_name, sender_key, prompt))
+        self._processing_tasks.add(task)
+        task.add_done_callback(lambda _done: self._processing_tasks.discard(task))
 
     async def _process_prompt(self, app_name: str, sender_key: str, prompt: QueuedPrompt) -> None:
         app_sessions = self._sessions.get(app_name)
         session = app_sessions.get(sender_key) if app_sessions else None
         if not session:
-            self._active_count -= 1
+            if self._active_count > 0:
+                self._active_count -= 1
             return
-
-        # Typing indicator
-        adapter = self._registry.get_adapter(prompt.adapter)
-        if adapter and self._config.typing_indicators:
-            with suppress(Exception):
-                await adapter.send_typing(prompt.sender)
 
         logger.info("Processing message %s for app '%s' from %s", prompt.id, app_name, sender_key)
         start_time = time.time()
 
         try:
+            # Typing indicator
+            adapter = self._registry.get_adapter(prompt.adapter)
+            if adapter and self._config.typing_indicators:
+                with suppress(Exception):
+                    await adapter.send_typing(prompt.sender)
+
             timeout_seconds = self._config.timeout_ms / 1000 if self._config.timeout_ms > 0 else None
             if timeout_seconds is None:
                 result = await self._run_agent_prompt(app_name, prompt, sender_key)
@@ -312,6 +322,9 @@ class ChatBridge:
                     timeout=timeout_seconds,
                 )
             duration_ms = (time.time() - start_time) * 1000
+
+            if not self._running:
+                return
 
             if result.ok:
                 await self._send_reply(
@@ -346,29 +359,33 @@ class ChatBridge:
                 app_name,
                 self._config.timeout_ms,
             )
-            await self._send_reply(
-                prompt.adapter,
-                prompt.sender,
-                "Error: Request timed out. Please try again with a shorter prompt.",
-                prompt_metadata=prompt.metadata,
-            )
+            if self._running:
+                await self._send_reply(
+                    prompt.adapter,
+                    prompt.sender,
+                    "Error: Request timed out. Please try again with a shorter prompt.",
+                    prompt_metadata=prompt.metadata,
+                )
 
         except Exception as exc:
             logger.exception("Error processing message %s", prompt.id)
-            await self._send_reply(
-                prompt.adapter,
-                prompt.sender,
-                f"Unexpected error: {exc}",
-                prompt_metadata=prompt.metadata,
-            )
+            if self._running:
+                await self._send_reply(
+                    prompt.adapter,
+                    prompt.sender,
+                    f"Unexpected error: {exc}",
+                    prompt_metadata=prompt.metadata,
+                )
         finally:
             session.processing = False
-            self._active_count -= 1
+            if self._active_count > 0:
+                self._active_count -= 1
             session.last_activity_at = time.time()
 
-            if session.queue:
+            if self._running and session.queue:
                 self._schedule_process(app_name, sender_key)
-            self._drain_waiting_sync()
+            if self._running:
+                self._drain_waiting_sync()
 
     async def _dispatch_interaction(self, message: IncomingMessage) -> bool:
         handler = self._interaction_handler

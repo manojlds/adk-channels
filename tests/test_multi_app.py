@@ -62,7 +62,7 @@ class TestMultiAppRouting:
             return "support" if "support" in msg.sender else "engineering"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=2),
+            bridge_config=BridgeConfig(max_concurrent=2),
             registry=registry,
             app_resolver=resolver,
             agent_runners={
@@ -96,7 +96,7 @@ class TestMultiAppRouting:
             return "Default reply"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            bridge_config=BridgeConfig(max_concurrent=1),
             registry=registry,
             agent_runners={"default": default_runner},
         )
@@ -120,7 +120,7 @@ class TestMultiAppRouting:
             return "HTTP default"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            bridge_config=BridgeConfig(max_concurrent=1),
             registry=registry,
             app_resolver=lambda _msg: "unknown-app",
             http_clients={"default": default_client},
@@ -145,7 +145,7 @@ class TestMultiAppRouting:
             return RunResult(ok=True, response="HTTP default", thoughts=["reasoning"])
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            bridge_config=BridgeConfig(max_concurrent=1),
             registry=registry,
             http_clients={"default": default_client},
         )
@@ -168,7 +168,7 @@ class TestMultiAppRouting:
             return "ok"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, session_mode="stateless"),
+            bridge_config=BridgeConfig(session_mode="stateless"),
             registry=registry,
             agent_runners={"default": default_runner},
         )
@@ -188,7 +188,7 @@ class TestMultiAppRouting:
     @pytest.mark.asyncio
     async def test_stats(self, registry):
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
         )
         bridge.start()
@@ -206,7 +206,7 @@ class TestMultiAppRouting:
             return "done"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_queue_per_sender=1, max_concurrent=1),
+            bridge_config=BridgeConfig(max_queue_per_sender=1, max_concurrent=1),
             registry=registry,
             agent_runners={"default": slow_runner},
         )
@@ -239,7 +239,7 @@ class TestMultiAppRouting:
             return f"Sync: {text}"
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True, max_concurrent=1),
+            bridge_config=BridgeConfig(max_concurrent=1),
             registry=registry,
             agent_runners={"default": sync_runner},
         )
@@ -267,7 +267,7 @@ class TestMultiAppRouting:
             return None
 
         bridge = ChatBridge(
-            bridge_config=BridgeConfig(enabled=True),
+            bridge_config=BridgeConfig(),
             registry=registry,
             agent_runners={"default": default_runner},
             interaction_handler=interaction_handler,

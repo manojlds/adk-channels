@@ -62,7 +62,6 @@ Need full copy/paste files? See `TEMPLATES.md` for complete Basic/Intermediate/A
 export ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack
 export ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN=xoxb-your-bot-token
 export ADK_CHANNELS_ADAPTERS__SLACK__APP_TOKEN=xapp-your-app-token
-export ADK_CHANNELS_BRIDGE__ENABLED=true
 
 # Optional: restrict to specific channels
 export ADK_CHANNELS_ADAPTERS__SLACK__ALLOWED_CHANNEL_IDS='["C0123456789"]'
@@ -299,7 +298,6 @@ ADK_CHANNELS_ROUTES__OPS__ADAPTER=slack
 ADK_CHANNELS_ROUTES__OPS__RECIPIENT=C0123456789
 
 # Bridge
-ADK_CHANNELS_BRIDGE__ENABLED=true
 ADK_CHANNELS_BRIDGE__SESSION_MODE=persistent
 ADK_CHANNELS_BRIDGE__MAX_QUEUE_PER_SENDER=5
 ADK_CHANNELS_BRIDGE__MAX_CONCURRENT=2
@@ -342,7 +340,6 @@ Example `channels.json`:
     }
   },
   "bridge": {
-    "enabled": true,
     "session_mode": "persistent",
     "session_scope": "sender",
     "max_concurrent": 2
@@ -574,7 +571,6 @@ Ephemeral state still exists outside the ADK session service:
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `enabled` | `false` | Enable the bridge |
 | `session_mode` | `"persistent"` | `"persistent"` or `"stateless"` |
 | `session_scope` | `"sender"` | `"sender"`, `"user"`, `"channel"`, or `"thread"` |
 | `session_rules` | `[]` | Per-sender mode overrides (glob patterns) |

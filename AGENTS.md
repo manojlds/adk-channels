@@ -104,7 +104,6 @@ Loaded via `pydantic-settings` with `env_prefix="ADK_CHANNELS_"` and nested deli
 ```bash
 ADK_CHANNELS_ADAPTERS__SLACK__TYPE=slack
 ADK_CHANNELS_ADAPTERS__SLACK__BOT_TOKEN=xoxb-...
-ADK_CHANNELS_BRIDGE__ENABLED=true
 ADK_CHANNELS_BRIDGE__MAX_CONCURRENT=2
 ```
 
