@@ -573,6 +573,12 @@ class SlackAdapter(BaseChannelAdapter):
         return combined[:50]
 
     @staticmethod
+    def _build_response_blocks(text: str) -> list[dict[str, Any]]:
+        if not text.strip():
+            return []
+        return [{"type": "section", "text": {"type": "mrkdwn", "text": text[:MAX_LENGTH]}}]
+
+    @staticmethod
     def _resolve_action_thread_ts(body: dict[str, Any]) -> str | None:
         message_raw = body.get("message")
         message = message_raw if isinstance(message_raw, dict) else {}
@@ -755,13 +761,14 @@ class SlackAdapter(BaseChannelAdapter):
         if len(full) <= MAX_LENGTH:
             blocks = self._build_outbound_blocks(metadata, tool_interactions)
             if blocks:
+                visible_blocks = [*self._build_response_blocks(full), *blocks][:50]
                 await web.chat_postMessage(
                     channel=channel,
                     text=full,
                     thread_ts=thread_ts,
                     unfurl_links=False,
                     unfurl_media=False,
-                    blocks=blocks,
+                    blocks=visible_blocks,
                 )
             else:
                 await web.chat_postMessage(

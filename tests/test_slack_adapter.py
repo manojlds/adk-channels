@@ -457,6 +457,29 @@ async def test_send_skips_completed_reaction_without_reactions_scope() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_with_blocks_includes_visible_response_text() -> None:
+    adapter = _make_adapter()
+    fake_web = _FakeSlackWebClient()
+    adapter._web_client = fake_web
+
+    await adapter.send(
+        ChannelMessage(
+            adapter="slack",
+            recipient="C123",
+            text="Final answer",
+            metadata={
+                "tool_interactions": [{"type": "tool_call", "name": "search_docs", "payload": '{"query":"sessions"}'}]
+            },
+        )
+    )
+
+    blocks = fake_web.messages[0]["blocks"]
+    assert blocks[0]["type"] == "section"
+    assert blocks[0]["text"]["text"] == "Final answer"
+    assert "Tool call" in blocks[1]["text"]["text"]
+
+
+@pytest.mark.asyncio
 async def test_add_completed_reaction_removes_processing_reaction_first() -> None:
     adapter = SlackAdapter(
         AdapterConfig(
